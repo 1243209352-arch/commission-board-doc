@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>佣金结算逻辑图 · 从下单到打款（2026-10-22 口径）</title>
+<style>
+
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --line:#e3e7ed; --line2:#cfd6e0;
+    --ink:#1c2430; --ink2:#4a5566; --ink3:#7b8794;
+    --payable:#2563eb;      /* 应付 */
+    --paid:#0f9d8f;         /* 实付 */
+    --diff:#d97706;         /* 差异 */
+    --warn:#dc2626;         /* 负向 / 扣减 */
+    --tbd:#b45309;          /* 待确认 */
+    --tbd-bg:#fff7ed;
+    --ok-bg:#eff6ff; --paid-bg:#eefbf7; --diff-bg:#fffbeb; --warn-bg:#fef2f2;
+    --r:10px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+    font-size:14px; line-height:1.6;
+  }
+  .wrap{max-width:1280px;margin:0 auto;padding:0 24px 80px;}
+
+  /* ---------- header ---------- */
+  header.top{background:linear-gradient(135deg,#1e3a5f 0%,#2b5b8a 100%);color:#fff;padding:28px 0 24px;margin-bottom:0;}
+  header.top .wrap{padding-bottom:0;}
+  h1{margin:0 0 6px;font-size:24px;letter-spacing:.5px;}
+  .sub{opacity:.85;font-size:13px;}
+  .snap{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}
+  .snap .k{background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.22);border-radius:8px;padding:8px 14px;min-width:118px;}
+  .snap .k b{display:block;font-size:19px;line-height:1.3;}
+  .snap .k span{font-size:11.5px;opacity:.82;}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 2px 8px rgba(20,30,50,.05);}
+  nav .wrap{display:flex;gap:4px;overflow-x:auto;padding:0 24px;}
+  nav a{padding:12px 12px;font-size:13px;color:var(--ink2);text-decoration:none;white-space:nowrap;border-bottom:2px solid transparent;}
+  nav a:hover{color:var(--payable);}
+  nav a.on{color:var(--payable);border-bottom-color:var(--payable);font-weight:600;}
+
+  /* ---------- section ---------- */
+  section{margin-top:34px;scroll-margin-top:60px;}
+  h2{font-size:18px;margin:0 0 4px;display:flex;align-items:center;gap:9px;}
+  h2 .no{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:var(--payable);color:#fff;font-size:12px;}
+  .lead{color:var(--ink2);font-size:13px;margin:0 0 16px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;}
+  .grid{display:grid;gap:14px;}
+  .g2{grid-template-columns:repeat(2,1fr);} .g3{grid-template-columns:repeat(3,1fr);} .g4{grid-template-columns:repeat(4,1fr);}
+  @media(max-width:960px){.g3,.g4{grid-template-columns:repeat(2,1fr);} .g2{grid-template-columns:1fr;}}
+
+  /* ---------- legend ---------- */
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 0;font-size:12.5px;color:var(--ink2);}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;}
+
+  /* ---------- source boxes ---------- */
+  .src{border:1px solid var(--line2);border-radius:var(--r);background:#fff;padding:14px 16px;}
+  .src h4{margin:0 0 8px;font-size:14px;}
+  .src .meta{font-size:12px;color:var(--ink3);}
+  .src.payable{border-top:3px solid var(--payable);}
+  .src.paid{border-top:3px solid var(--paid);}
+  .src.unknown{border-top:3px dashed var(--tbd);background:var(--tbd-bg);}
+  .arrowdown{text-align:center;color:var(--ink3);font-size:20px;margin:6px 0;}
+
+  /* ---------- flow ---------- */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;}
+  .flow .step{flex:1;min-width:170px;background:#fff;border:1px solid var(--line2);border-radius:8px;padding:12px 14px;position:relative;margin:6px 0;}
+  .flow .step:not(:last-child){margin-right:26px;}
+  .flow .step:not(:last-child)::after{content:"";position:absolute;right:-20px;top:50%;width:0;height:0;border-top:7px solid transparent;border-bottom:7px solid transparent;border-left:11px solid var(--line2);transform:translateY(-50%);}
+  .flow .step .t{font-size:12px;color:var(--ink3);}
+  .flow .step .n{font-size:13.5px;font-weight:600;margin-top:2px;}
+
+  /* ---------- field table ---------- */
+  table{width:100%;border-collapse:collapse;font-size:12.6px;}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top;}
+  th{background:#f0f3f7;font-weight:600;color:var(--ink2);}
+  td.mono{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;color:var(--ink2);}
+  tr:nth-child(even) td{background:#fafbfc;}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;line-height:1.7;white-space:nowrap;}
+  .t-key{background:#e8f0fe;color:#1a56db;}      /* 主键/关联 */
+  .t-dim{background:#eef2f7;color:#475569;}      /* 维度 */
+  .t-msr{background:#e6f7f3;color:#0b7d70;}      /* 度量 */
+  .t-src{background:#f3e8ff;color:#7c3aed;}      /* 追溯 */
+  .t-tbd{background:var(--tbd-bg);color:var(--tbd);border:1px dashed var(--tbd);}
+  .fillbar{display:inline-block;height:6px;border-radius:3px;background:#2f855a;}
+  .fillbar.low{background:var(--tbd);} .fillbar.zero{background:var(--warn);}
+
+  /* ---------- pill / chip ---------- */
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .chip{font-size:12px;background:#f1f4f9;border:1px solid var(--line);border-radius:6px;padding:3px 9px;color:var(--ink2);}
+  .chip b{color:var(--ink);font-weight:600;}
+  .chip.tbd{background:var(--tbd-bg);border:1px dashed var(--tbd);color:var(--tbd);}
+
+  /* ---------- dim tree ---------- */
+  .dimcol{border:1px solid var(--line2);border-radius:8px;background:#fff;overflow:hidden;}
+  .dimcol .hd{padding:9px 12px;font-weight:600;font-size:13px;color:#fff;}
+  .dimcol .bd{padding:10px 12px;font-size:12.5px;}
+  .dimcol .bd ul{margin:0;padding-left:17px;}
+
+  /* ---------- tbd list ---------- */
+  ol.tbd{margin:0;padding-left:22px;}
+  ol.tbd li{margin-bottom:9px;}
+  .badge{font-size:11px;padding:1px 7px;border-radius:99px;margin-left:6px;}
+  .badge.y{background:#e6f7f3;color:#0b7d70;}
+  .badge.n{background:var(--tbd-bg);color:var(--tbd);border:1px dashed var(--tbd);}
+
+  /* ---------- diff scenarios ---------- */
+  .diff{border-left:4px solid var(--diff);background:#fff;border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:12px 14px;}
+  .diff .ttl{font-weight:600;font-size:13.5px;}
+  .diff .desc{font-size:12.5px;color:var(--ink2);margin-top:3px;}
+  .diff.match{border-left-color:var(--paid);}
+  .diff.block{border-left-color:var(--warn);}
+  .diff.tbd{border-left-color:var(--tbd);background:var(--tbd-bg);border-style:dashed;}
+
+  .note{font-size:12.5px;color:var(--ink3);border-left:3px solid var(--line2);padding-left:10px;margin-top:12px;}
+  .kpi{display:flex;flex-direction:column;gap:2px;}
+  .kpi b{font-size:20px;}
+  .kpi span{font-size:12px;color:var(--ink3);}
+  .box-blue{background:var(--ok-bg);border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;}
+  .box-green{background:var(--paid-bg);border:1px solid #a7f3d0;border-radius:8px;padding:12px 14px;}
+  .box-amber{background:var(--diff-bg);border:1px solid #fde68a;border-radius:8px;padding:12px 14px;}
+  .box-red{background:var(--warn-bg);border:1px solid #fecaca;border-radius:8px;padding:12px 14px;}
+  hr.sep{border:0;border-top:1px dashed var(--line2);margin:16px 0;}
+  .mini{font-size:12px;color:var(--ink3);}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink3);}
+</style>
+<style>
+  /* ===== 结算图专用 ===== */
+  .chain{display:flex;flex-direction:column;align-items:center;width:100%;}
+  .cn{width:100%;max-width:880px;background:#fff;border:1px solid var(--line2);border-left-width:5px;border-radius:10px;padding:12px 16px;display:flex;gap:12px;align-items:flex-start;}
+  .cn .no{flex:0 0 34px;height:34px;border-radius:8px;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;}
+  .cn .bd{flex:1;min-width:0;}
+  .cn .bd b{font-size:14px;display:block;}
+  .cn .bd .mini{margin-top:2px;}
+  .cn.pay{border-left-color:var(--payable);} .cn.pay .no{background:var(--payable);}
+  .cn.paid{border-left-color:var(--paid);} .cn.paid .no{background:var(--paid);}
+  .cn.dia{border-left-color:var(--diff);border-style:dashed;background:var(--diff-bg);} .cn.dia .no{background:var(--diff);}
+  .cn.warn{border-left-color:var(--warn);background:var(--warn-bg);} .cn.warn .no{background:var(--warn);}
+  .ar{color:var(--ink3);font-size:12px;line-height:1;margin:7px 0;text-align:center;}
+  .ar .lb{background:#fff;border:1px solid var(--line2);border-radius:99px;padding:3px 11px;display:inline-block;margin-bottom:4px;color:var(--ink2);}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:880px;width:100%;}
+  @media(max-width:900px){.split{grid-template-columns:1fr;}}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .tag{font-size:11.5px;padding:2px 8px;border-radius:6px;background:#eef2f7;color:var(--ink2);}
+  .tag.up{background:#e6f7f3;color:#0b7d70;}
+  .tag.warn2{background:var(--warn-bg);color:var(--warn);}
+  .tag.new{background:#eef2ff;color:#4338ca;border:1px dashed #a5b4fc;}
+  .tag.tbd2{background:var(--tbd-bg);color:var(--tbd);border:1px dashed var(--tbd);}
+  table.sl{width:100%;border-collapse:collapse;font-size:12.8px;}
+  table.sl th,table.sl td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}
+  table.sl th{background:#f2f5f9;font-weight:600;white-space:nowrap;}
+  table.sl td.c{white-space:nowrap;}
+  .ax{display:flex;flex-wrap:wrap;margin:14px 0 4px;}
+  .ax .p{flex:1;min-width:120px;position:relative;padding:26px 6px 0;text-align:center;}
+  .ax .p:before{content:'';position:absolute;top:9px;left:0;right:0;height:2px;background:var(--line2);}
+  .ax .p:first-child:before{left:50%;} .ax .p:last-child:before{right:50%;}
+  .ax .p .dot{position:absolute;top:4px;left:50%;margin-left:-6px;width:12px;height:12px;border-radius:50%;background:var(--payable);border:2px solid #fff;box-shadow:0 0 0 1px var(--line2);}
+  .ax .p .dot.d2{background:var(--paid);} .ax .p .dot.d3{background:var(--diff);} .ax .p .dot.d4{background:var(--warn);}
+  .ax .p b{display:block;font-size:12.8px;}
+  .ax .p span{font-size:11.5px;color:var(--ink3);}
+  .vl{font-size:12.5px;color:var(--ink2);}
+  .vl b{color:var(--ink);}
+  .kill{background:var(--warn-bg);border:1px dashed var(--warn);border-radius:8px;padding:10px 13px;font-size:12.5px;color:var(--ink2);margin-top:12px;}
+  .kill b{color:var(--warn);}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <h1>佣金结算逻辑图 · 从下单到打款</h1>
+    <div class="sub">口径版本 <b>2026-10-22</b>（韩浩旭 10-22 群内更正已并入）｜实测样本：2026 年 9 月满足结算表 610 行</div>
+    <div class="snap">
+      <div class="k"><b>+10 自然日</b><span>订单完成 → 满足结算</span></div>
+      <div class="k"><b>7 自然日</b><span>图书物流签收后系统自动确认</span></div>
+      <div class="k"><b>2 类商品</b><span>图书 / 999 原生营</span></div>
+      <div class="k"><b>认领制</b><span>过渡期支付通道判定</span></div>
+      <div class="k"><b>3 种月份</b><span>订单月 / 结算月 / 支付月</span></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <div class="wrap">
+    <a href="#s1" class="on">1 · 结算主链</a>
+    <a href="#s2">2 · 订单完成判定</a>
+    <a href="#s3">3 · 结算时点</a>
+    <a href="#s4">4 · 支付通道</a>
+    <a href="#s5">5 · 拆商品与付没付</a>
+    <a href="#s6">6 · 不发放闸门</a>
+    <a href="#s7">7 · 角色切换</a>
+    <a href="#s8">8 · 延伸动作</a>
+    <a href="#s9">9 · 状态机</a>
+    <a href="#s10">10 · 遗留待确认</a>
+    <a href="commission_requirement_map.html" style="margin-left:auto">需求图 ↗</a>
+    <a href="commission_logic_map.html">逻辑图 ↗</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ============ 1 ============ -->
+<section id="s1">
+  <h2><span class="no">1</span>结算主链：一张图看完从下单到打款</h2>
+  <p class="lead">蓝色＝应付链路（订单侧，记账即成立）；绿色＝实付链路（付款侧）；橙色虚线＝判断分支；红色＝终止不发放。</p>
+
+  <div class="card">
+    <div class="chain">
+
+      <div class="cn pay">
+        <div class="no">S1</div>
+        <div class="bd"><b>订单产生 → 应付成立</b>
+          <div class="mini">用户一下单就记账，按 30% 或固定金额算出应付佣金；退款产生负向冲减流水。</div>
+          <div class="tags"><span class="tag">9 月样本：正向 581 行 ¥33,036.30</span><span class="tag warn2">负向 29 行 −¥1,633.40</span><span class="tag">净额 ¥31,402.90</span></div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">按商品分流判定「订单完成」</span>▼</div>
+
+      <div class="split">
+        <div class="cn pay">
+          <div class="no">S2a</div>
+          <div class="bd"><b>图书 · 确认收货</b>
+            <div class="mini">① 学员主动确认收货；<br>② 未主动确认的，系统识别<b>物流已签收后 7 个自然日</b>自动确认。</div>
+            <div class="tags"><span class="tag new">10-22 更正</span><span class="tag">订单量 500 行</span><span class="tag">¥15,412.20 / 49.1%</span></div>
+          </div>
+        </div>
+        <div class="cn pay">
+          <div class="no">S2b</div>
+          <div class="bd"><b>999 原生营 · 付款成功</b>
+            <div class="mini">付款成功、收到钱即视为<b>订单完成</b>，不等结课、不等服务期结束。</div>
+            <div class="tags"><span class="tag new">10-22 更正</span><span class="tag">订单量 110 行</span><span class="tag">¥15,990.70 / 50.9%</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">任一路径达成 → 订单完成</span>▼</div>
+
+      <div class="cn pay">
+        <div class="no">S3</div>
+        <div class="bd"><b>满足结算：订单完成 + 10 个自然日</b>
+          <div class="mini">统一适用全部商品，<b>不是工作日</b>，不跳过节假日。</div>
+          <div class="tags"><span class="tag new">10-22 更正：原「+10 个工作日」作废</span><span class="tag tbd2">应付表无「确认收货 / 签收时间」字段，只能按订单时间粗估</span></div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">过闸门</span>▼</div>
+
+      <div class="cn dia">
+        <div class="no">S4</div>
+        <div class="bd"><b>是否符合发放条件？</b>
+          <div class="mini">不符合 → 不发放 → 计入差异（应付有 · 实付无）。详见第 6 节闸门清单。</div>
+          <div class="tags"><span class="tag warn2">官方号 / 白名单</span><span class="tag warn2">班主任 999 属职责内</span><span class="tag warn2">公职无法签约</span><span class="tag warn2">拒收</span></div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">符合 → 进入支付通道</span>▼</div>
+
+      <div class="cn dia">
+        <div class="no">S5</div>
+        <div class="bd"><b>人力认领？</b>
+          <div class="mini">过渡期判定：人力系统与后台正在打通，应付先交<b>人力人工认领订单</b>。</div>
+          <div class="tags"><span class="tag new">10-22 更正：旧规则「有企微＝人力付」作废</span></div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">认领 → 人力付　｜　未认领 → 财务付</span>▼</div>
+
+      <div class="split">
+        <div class="cn paid">
+          <div class="no">S6a</div>
+          <div class="bd"><b>人力支付 · 认领订单</b>
+            <div class="mini">被人力认领的订单走人力通道发放，记入人力支付表。</div>
+            <div class="tags"><span class="tag up">9 月样本：员工 288 行 / 47.2%</span><span class="tag">¥17,953.20</span><span class="tag new">需拆商品</span></div>
+          </div>
+        </div>
+        <div class="cn paid">
+          <div class="no">S6b</div>
+          <div class="bd"><b>财务支付 · 其余订单</b>
+            <div class="mini">未被认领的走财务通道，经三方平台发放，含平台费用。</div>
+            <div class="tags"><span class="tag up">9 月样本：创作者 322 行 / 52.8%</span><span class="tag">¥13,449.70</span><span class="tag new">需拆商品</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">财务通道还需过签约</span>▼</div>
+
+      <div class="cn dia">
+        <div class="no">S7</div>
+        <div class="bd"><b>已签约？</b>
+          <div class="mini">已签约 → 正常发放；<b>未签约 → 暂缓，并触发「提醒签约」把名单推给小组助教</b>。</div>
+          <div class="tags"><span class="tag new">10-22 新增：提醒签约</span></div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">发放落账</span>▼</div>
+
+      <div class="cn paid">
+        <div class="no">S8</div>
+        <div class="bd"><b>实付记录 = 应付同源 + 「付没付」标记</b>
+          <div class="mini">实付与应付<b>共用同一份明细</b>，只多一列「这笔单子付没付」。先标标记，再做差额核对。</div>
+          <div class="tags"><span class="tag new">10-22 更正：不再按「两套表」描述</span><span class="tag new">实付必须能拆到商品</span></div>
+        </div>
+      </div>
+
+      <div class="ar"><span class="lb">核对 & 延伸</span>▼</div>
+
+      <div class="cn pay">
+        <div class="no">S9</div>
+        <div class="bd"><b>差异核对 → 延伸动作</b>
+          <div class="mini">应付 − 实付 ＝ 差异（不等于异常），下钻到人 / 单 / 品 / 月；同时产出素人线索与待签约名单。</div>
+          <div class="tags"><span class="tag">素人挖掘：给 IP 组反向线索</span><span class="tag new">提醒签约：名单推给助教</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="kill">
+      <b>本轮作废的旧口径：</b>①「图书确认收货后 +10 个<b>工作日</b>」→ 改为订单完成后 +10 个<b>自然日</b>；②「训练营结束才算完成」→ 改为 999 原生营<b>付款成功即完成</b>；③「有企微＝人力付 / 无企微＝财务付」→ 改为过渡期<b>人力认领制</b>；④「应付、实付两套数据」→ 改为<b>同源 + 付没付标记</b>。
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="s2">
+  <h2><span class="no">2</span>订单完成判定：按商品分叉</h2>
+  <p class="lead">「订单完成」是结算的唯一入口时点，不同商品判定方式不同 —— 这是本轮更正的核心。</p>
+
+  <div class="card">
+    <table class="sl">
+      <thead><tr><th>商品</th><th>订单完成判定</th><th>具体口径</th><th>备注</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="c"><b>图书</b></td>
+          <td class="c">学员确认收货</td>
+          <td>两种情况均可成立：<br>① 学员<b>主动确认</b>收货；<br>② 学员未主动确认的，系统识别<b>物流已签收</b>后 <b>7 个自然日</b>自动确认。</td>
+          <td>7 个自然日从<b>物流签收日</b>起算；应付表暂无「确认收货 / 签收时间」字段，需数据侧补。</td>
+        </tr>
+        <tr>
+          <td class="c"><b>999 原生营</b><div class="mini">花径原生家庭营 · 7 天线上父母训练营</div></td>
+          <td class="c">付款成功</td>
+          <td><b>付款成功即收到钱</b>就视为订单完成，不等开营、不等结课。</td>
+          <td>旧口径「训练营结束 / 结课」作废。</td>
+        </tr>
+        <tr>
+          <td class="c">其他商品<div class="mini">待确认</div></td>
+          <td class="c"><span class="tag tbd2">待补</span></td>
+          <td>商品清单是否只有这两类，需业务方确认。</td>
+          <td>图书按书名拆 4 本，书名与商品数口径待确认。</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note">订单完成 ≠ 已付款。「已完成」只代表达到下一步计时条件。</div>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="s3">
+  <h2><span class="no">3</span>结算时点与三种月份口径</h2>
+  <p class="lead">订单完成 → +10 个自然日 → 满足结算 → 实际打款，三段时点天然错位，这是应付与实付对不上的主因之一。</p>
+
+  <div class="card">
+    <div class="ax">
+      <div class="p"><span class="dot"></span><b>T0 订单完成</b><span>图书确认收货<br>/ 999 原生营付款成功</span></div>
+      <div class="p"><span class="dot d2"></span><b>T0 +10 自然日</b><span>满足结算<br>进入可发状态</span></div>
+      <div class="p"><span class="dot d3"></span><b>支付月打款</b><span>人力 / 财务实际付款</span></div>
+      <div class="p"><span class="dot d4"></span><b>负向冲减</b><span>退款产生反向流水</span></div>
+    </div>
+
+    <hr class="sep">
+
+    <div class="grid g3">
+      <div class="box-blue">
+        <div class="mini"><b>① 订单月</b></div>
+        <div style="font-size:12.5px;margin-top:5px">用户下单的月份。应付表<b>无此字段</b>，需回到来源单据 ID 对应的订单表取。</div>
+      </div>
+      <div class="box-amber">
+        <div class="mini"><b>② 结算月</b></div>
+        <div style="font-size:12.5px;margin-top:5px">满足结算的月份。本表唯一有值的月份字段（9 月样本 610 行全部为「满足结算」）。</div>
+      </div>
+      <div class="box-green">
+        <div class="mini"><b>③ 支付月</b></div>
+        <div style="font-size:12.5px;margin-top:5px">实际打款的月份，来自人力 / 财务实付记录。与订单月<b>天然错位</b>。</div>
+      </div>
+    </div>
+
+    <div class="note">趋势图必须明确标注采用哪种口径，看板上要能一键切换。三种口径混用是图表对不上的常见原因。</div>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="s4">
+  <h2><span class="no">4</span>支付通道：过渡期认领制</h2>
+  <p class="lead">人力系统与后台正在打通，过渡期靠人工认领来切分两条支付通道。</p>
+
+  <div class="card">
+    <div class="flow">
+      <div class="step"><div class="t">输入</div><div class="n">应付汇总</div><div class="mini">已满足结算</div></div>
+      <div class="step"><div class="t">动作</div><div class="n">人力人工认领订单</div><div class="mini">过渡期临时机制</div></div>
+      <div class="step"><div class="t">分流</div><div class="n">认领 → 人力付<br>其余 → 财务付</div><div class="mini">两条通道</div></div>
+      <div class="step"><div class="t">输出</div><div class="n">实付记录 + 付没付标记</div><div class="mini">同源落账</div></div>
+    </div>
+
+    <hr class="sep">
+
+    <div class="grid g2">
+      <div class="box-blue">
+        <div class="mini"><b>人力支付 · 认领订单</b></div>
+        <div style="font-size:12.5px;margin-top:6px">由人力从应付中认领并发放。<b>不是</b>按「是否有企微」自动判定，而是按当月认领结果。<br>9 月样本：288 行 / 47.2% / ¥17,953.20。</div>
+      </div>
+      <div class="box-green">
+        <div class="mini"><b>财务支付 · 其余订单</b></div>
+        <div style="font-size:12.5px;margin-top:6px">未被认领的走财务通道，经三方平台发放，含平台费用。<br>9 月样本：322 行 / 52.8% / ¥13,449.70。</div>
+      </div>
+    </div>
+
+    <div class="kill">
+      <b>旧规则作废：</b>此前描述为「有企微＝员工→人力付；无企微＝非员工创作者→财务付」。10-22 更正为认领制后，员工 / 非员工不再等于支付通道，二者只能作为<b>统计维度</b>，不能作为路由规则。系统打通后此过渡机制应可撤销。
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="s5">
+  <h2><span class="no">5</span>拆商品 + 付没付标记</h2>
+  <p class="lead">本轮两条更正都落在实付侧：实付不能只停在「谁付的」，还要能拆到商品；应付与实付是同一份数据，只差一列标记。</p>
+
+  <div class="card" style="margin-bottom:14px">
+    <h4 style="margin:0 0 8px">应付 vs 实付：同源关系</h4>
+    <table class="sl">
+      <thead><tr><th>对比项</th><th>应付</th><th>实付</th></tr></thead>
+      <tbody>
+        <tr><td class="c">数据来源</td><td>分佣流水（订单级）</td><td><b>同一份明细</b>，不是另一套数据</td></tr>
+        <tr><td class="c">差异字段</td><td>—</td><td>多一列 <b>「这笔单子付没付」</b> 标记</td></tr>
+        <tr><td class="c">成立时点</td><td>下单即成立</td><td>满足结算 + 过闸门 + 实际打款</td></tr>
+        <tr><td class="c">商品拆分</td><td>已含商品维度</td><td><b>必须同样能拆商品</b>（10-22 新增要求）</td></tr>
+        <tr><td class="c">核对方式</td><td colspan="2">先按「付没付」标记分组，再在组内做金额差额核对 —— <b>不要按两套数据硬关联</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid g2">
+    <div class="card" style="border-top:3px solid var(--payable)">
+      <h4 style="margin:0 0 6px">实付 · 人力支付（认领）</h4>
+      <div class="mini" style="margin-bottom:8px">按商品拆开看，而不是只看总额。</div>
+      <div class="tags">
+        <span class="tag">999 原生营</span><span class="tag">图书 · 按书名</span>
+        <span class="tag">正向 / 负向</span><span class="tag new">拆商品</span>
+        <span class="tag">实付人数 / 金额</span><span class="tag">应发未发人员</span>
+      </div>
+    </div>
+    <div class="card" style="border-top:3px solid var(--paid)">
+      <h4 style="margin:0 0 6px">实付 · 财务支付（其余）</h4>
+      <div class="mini" style="margin-bottom:8px">同样按商品拆，并保留第三方平台费用。</div>
+      <div class="tags">
+        <span class="tag">999 原生营</span><span class="tag">图书 · 按书名</span>
+        <span class="tag">发放明细：每人多少</span><span class="tag new">拆商品</span>
+        <span class="tag tbd2">第三方平台费用预估</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">商品金额分布（9 月应付样本）：999 原生营 ¥15,990.70 / 50.9%，图书 4 本 ¥15,412.20 / 49.1% —— 金额几乎对半，但订单量 110 vs 500 行，单价差异大，必须分开看。</div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="s6">
+  <h2><span class="no">6</span>不发放闸门：造成「应付有 · 实付无」的情形</h2>
+  <p class="lead">过了 S4 闸门才可能发放；被拦下的计入差异，但不等于异常。</p>
+
+  <div class="grid g2">
+    <div class="diff block"><div class="ttl">官方号 / 白名单</div><div class="desc">官方账号不参与结算。白名单清单来源与维护方待确认。</div></div>
+    <div class="diff block"><div class="ttl">班主任的 999 订单</div><div class="desc">999 属岗位职责内，不额外发放 APP 佣金。是否适用于其他岗位待确认。</div></div>
+    <div class="diff block"><div class="ttl">公职人员</div><div class="desc">无法签约，因此无法走财务发放。</div></div>
+    <div class="diff block"><div class="ttl">拒收 / 拒绝收款</div><div class="desc">创作者本人拒绝收款。</div></div>
+    <div class="diff tbd"><div class="ttl">公益直播等其他场景</div><div class="desc">口述提到但未列全，<b>完整清单待补</b>，不写成自动规则。</div></div>
+    <div class="diff tbd"><div class="ttl">尚未到支付周期</div><div class="desc">订单完成后 +10 自然日未到，本期对不上、下月出现。</div></div>
+  </div>
+
+  <div class="note">页面只做提示与筛选，<b>不自动判定异常、不自动归类原因</b>。</div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="s7">
+  <h2><span class="no">7</span>特殊场景：发放角色切换（分段结算）</h2>
+  <p class="lead">人的员工 / 创作者身份可能在月中切换，佣金按<b>行为发生时的身份</b>分段结算。</p>
+
+  <div class="card">
+    <div class="grid g2">
+      <div class="box-amber">
+        <div class="mini"><b>场景 A · 员工 → 离职 → 次月分佣</b></div>
+        <div style="font-size:12.5px;margin-top:6px">
+          <b>在职期间</b>：按工资结算发放。<br>
+          <b>离职之后</b>：按创作者规则结算发放。<br>
+          <span class="mini">同一个人同一个月出现两种结算方式。</span>
+        </div>
+      </div>
+      <div class="box-blue">
+        <div class="mini"><b>场景 B · 创作者 → 入职 → 次月分佣</b></div>
+        <div style="font-size:12.5px;margin-top:6px">
+          <b>暂无此类案例。</b><br>
+          处理方式：先在流水上<b>记录发放角色</b>，待实际发放时再确认具体方式。<br>
+          <span class="mini">不为未发生的场景写死规则。</span>
+        </div>
+      </div>
+    </div>
+
+    <hr class="sep">
+
+    <div class="box-green">
+      <div class="mini"><b>面板实现要求</b></div>
+      <div style="font-size:12.5px;margin-top:6px">流水上保留 <b>「发放角色」字段</b>；切换月的人员<b>分段展示</b>（在职段 / 离职段），支持按段筛选与导出。</div>
+    </div>
+
+    <div class="note">口径来源：韩浩旭 2026-09-09 群内说明，10-22 补充并入结算图。</div>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="s8">
+  <h2><span class="no">8</span>延伸动作：素人挖掘 + 提醒签约</h2>
+  <p class="lead">结算数据除了核对，还要反向喂给业务 —— 本轮新增「提醒签约」。</p>
+
+  <div class="grid g2">
+    <div class="card" style="border-top:3px solid var(--payable)">
+      <h4 style="margin:0 0 6px">素人挖掘</h4>
+      <div class="mini">从结算流水中识别未接触的野生创作者，给 IP 组反向线索（一心 / 冠鹏 / 博轩，12 月 100 个 IP 目标）。</div>
+      <div class="tags"><span class="tag">孵化 / 素人维度</span><span class="tag">反向线索清单</span></div>
+    </div>
+    <div class="card" style="border-top:3px solid var(--paid)">
+      <h4 style="margin:0 0 6px">提醒签约 <span class="tag new">10-22 新增</span></h4>
+      <div class="mini">把<b>未签约名单</b>直接推给对应小组助教，由助教催签约 —— 未签约是「暂缓发放」的主因之一。</div>
+      <div class="tags"><span class="tag">未签约名单</span><span class="tag">推送给小组助教</span><span class="tag">签约推进结果回写</span></div>
+    </div>
+  </div>
+
+  <div class="note">两者都属于结算数据的延伸用法，不是结算主链的必经节点。</div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="s9">
+  <h2><span class="no">9</span>状态机：订单状态与佣金状态并行</h2>
+  <p class="lead">上行是订单状态，下行是对应的佣金状态，中间的时间差即差异来源之一。</p>
+
+  <div class="card">
+    <div class="ax">
+      <div class="p"><span class="dot"></span><b>已下单</b><span>订单产生</span></div>
+      <div class="p"><span class="dot"></span><b>已完成</b><span>图书确认收货<br>/ 999 原生营付款成功</span></div>
+      <div class="p"><span class="dot d2"></span><b>可结算</b><span>完成后 +10 自然日</span></div>
+      <div class="p"><span class="dot d3"></span><b>已发放</b><span>人力 / 财务付款<br>（付没付＝已付）</span></div>
+      <div class="p"><span class="dot d4"></span><b>已冲销</b><span>退款产生负向</span></div>
+    </div>
+
+    <hr class="sep">
+
+    <div class="ax">
+      <div class="p"><span class="dot"></span><b>应付成立</b><span>下单即有</span></div>
+      <div class="p"><span class="dot"></span><b>应付确认</b><span>金额不再变</span></div>
+      <div class="p"><span class="dot d2"></span><b>待发放</b><span>满足结算</span></div>
+      <div class="p"><span class="dot d3"></span><b>实付记录</b><span>打款落账</span></div>
+      <div class="p"><span class="dot d4"></span><b>负向冲减</b><span>退费反向扣回</span></div>
+    </div>
+
+    <div class="note">9 月样本中 610 行状态全部为「满足结算」，但<b>结算时间、结算单号 100% 为空</b> → 「满足结算」只代表达到付款条件，<b>不代表已经付款</b>。</div>
+  </div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="s10">
+  <h2><span class="no">10</span>遗留待确认</h2>
+  <p class="lead">10-22 本轮已解决 3 条（结算时点、商品完成判定、支付通道），以下仍需业务方书面确认后才进入开发。</p>
+
+  <div class="card">
+    <ol class="tbd">
+      <li><b>字段缺失</b>：应付表无「确认收货 / 签收时间」字段，+10 自然日只能按订单时间粗估，需数据侧补字段。<span class="badge n">阻塞精确排期</span></li>
+      <li><b>商品清单</b>：是否只有图书与 999 原生营两类；图书按书名拆 4 本的书名口径。</li>
+      <li><b>白名单 / 官方号清单</b>：后台白名单功能不完善，当前清单从哪来、由谁维护。</li>
+      <li><b>班主任 999 不发放</b>：判定字段是什么，是否覆盖全部 999 订单，是否适用其他岗位。</li>
+      <li><b>不发放场景完整性</b>：口述提到「公益直播等」，完整清单待补。</li>
+      <li><b>6.8% 平台费用</b>：是税费还是手续费？计算基数？是否仅财务侧？是否计入本看板成本。</li>
+      <li><b>三种月份口径</b>：趋势图默认用哪一种，是否需要一键切换。</li>
+      <li><b>人员组织</b>：6 个队正式名称、非员工是否归队、岗位完整分类。</li>
+      <li><b>叫法统一</b>：对外称「999 原生营」还是「999 训练营」。</li>
+    </ol>
+    <div class="note">已解决项：+10 自然日统一适用（原 +10 工作日作废）；图书 / 999 原生营完成判定；过渡期认领制取代企微判定；应付实付同源 + 付没付标记；素人挖掘追加提醒签约。</div>
+  </div>
+</section>
+
+<footer>
+  相关：<a href="commission_requirement_map.html">需求图</a> · <a href="commission_logic_map.html">业务逻辑图</a><br>
+  佣金结算逻辑图 · 口径版本 2026-10-22　｜　依据：韩浩旭 10-22 群内更正、2026 年 9 月满足结算表（610 行实测）、分佣流水 42 字段校验<br>
+  凡标注「待确认 / 待补」处均为原文存在歧义或信息缺失，需业务方补充后确认，页面不自动判定。
+</footer>
+
+</div>
+</body>
+</html>

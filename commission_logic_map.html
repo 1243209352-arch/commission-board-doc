@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>佣金数据看板 · 业务逻辑可视化（基于 2026年9月-满足结算.xlsx 字段校验）</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --line:#e3e7ed; --line2:#cfd6e0;
+    --ink:#1c2430; --ink2:#4a5566; --ink3:#7b8794;
+    --payable:#2563eb;      /* 应付 */
+    --paid:#0f9d8f;         /* 实付 */
+    --diff:#d97706;         /* 差异 */
+    --warn:#dc2626;         /* 负向 / 扣减 */
+    --tbd:#b45309;          /* 待确认 */
+    --tbd-bg:#fff7ed;
+    --ok-bg:#eff6ff; --paid-bg:#eefbf7; --diff-bg:#fffbeb; --warn-bg:#fef2f2;
+    --r:10px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+    font-size:14px; line-height:1.6;
+  }
+  .wrap{max-width:1280px;margin:0 auto;padding:0 24px 80px;}
+
+  /* ---------- header ---------- */
+  header.top{background:linear-gradient(135deg,#1e3a5f 0%,#2b5b8a 100%);color:#fff;padding:28px 0 24px;margin-bottom:0;}
+  header.top .wrap{padding-bottom:0;}
+  h1{margin:0 0 6px;font-size:24px;letter-spacing:.5px;}
+  .sub{opacity:.85;font-size:13px;}
+  .snap{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}
+  .snap .k{background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.22);border-radius:8px;padding:8px 14px;min-width:118px;}
+  .snap .k b{display:block;font-size:19px;line-height:1.3;}
+  .snap .k span{font-size:11.5px;opacity:.82;}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;background:#fff;border-bottom:1px solid var(--line);box-shadow:0 2px 8px rgba(20,30,50,.05);}
+  nav .wrap{display:flex;gap:4px;overflow-x:auto;padding:0 24px;}
+  nav a{padding:12px 12px;font-size:13px;color:var(--ink2);text-decoration:none;white-space:nowrap;border-bottom:2px solid transparent;}
+  nav a:hover{color:var(--payable);}
+  nav a.on{color:var(--payable);border-bottom-color:var(--payable);font-weight:600;}
+
+  /* ---------- section ---------- */
+  section{margin-top:34px;scroll-margin-top:60px;}
+  h2{font-size:18px;margin:0 0 4px;display:flex;align-items:center;gap:9px;}
+  h2 .no{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:var(--payable);color:#fff;font-size:12px;}
+  .lead{color:var(--ink2);font-size:13px;margin:0 0 16px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;}
+  .grid{display:grid;gap:14px;}
+  .g2{grid-template-columns:repeat(2,1fr);} .g3{grid-template-columns:repeat(3,1fr);} .g4{grid-template-columns:repeat(4,1fr);}
+  @media(max-width:960px){.g3,.g4{grid-template-columns:repeat(2,1fr);} .g2{grid-template-columns:1fr;}}
+
+  /* ---------- legend ---------- */
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 0 0;font-size:12.5px;color:var(--ink2);}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;}
+
+  /* ---------- source boxes ---------- */
+  .src{border:1px solid var(--line2);border-radius:var(--r);background:#fff;padding:14px 16px;}
+  .src h4{margin:0 0 8px;font-size:14px;}
+  .src .meta{font-size:12px;color:var(--ink3);}
+  .src.payable{border-top:3px solid var(--payable);}
+  .src.paid{border-top:3px solid var(--paid);}
+  .src.unknown{border-top:3px dashed var(--tbd);background:var(--tbd-bg);}
+  .arrowdown{text-align:center;color:var(--ink3);font-size:20px;margin:6px 0;}
+
+  /* ---------- flow ---------- */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;}
+  .flow .step{flex:1;min-width:170px;background:#fff;border:1px solid var(--line2);border-radius:8px;padding:12px 14px;position:relative;margin:6px 0;}
+  .flow .step:not(:last-child){margin-right:26px;}
+  .flow .step:not(:last-child)::after{content:"";position:absolute;right:-20px;top:50%;width:0;height:0;border-top:7px solid transparent;border-bottom:7px solid transparent;border-left:11px solid var(--line2);transform:translateY(-50%);}
+  .flow .step .t{font-size:12px;color:var(--ink3);}
+  .flow .step .n{font-size:13.5px;font-weight:600;margin-top:2px;}
+
+  /* ---------- field table ---------- */
+  table{width:100%;border-collapse:collapse;font-size:12.6px;}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top;}
+  th{background:#f0f3f7;font-weight:600;color:var(--ink2);}
+  td.mono{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;color:var(--ink2);}
+  tr:nth-child(even) td{background:#fafbfc;}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;line-height:1.7;white-space:nowrap;}
+  .t-key{background:#e8f0fe;color:#1a56db;}      /* 主键/关联 */
+  .t-dim{background:#eef2f7;color:#475569;}      /* 维度 */
+  .t-msr{background:#e6f7f3;color:#0b7d70;}      /* 度量 */
+  .t-src{background:#f3e8ff;color:#7c3aed;}      /* 追溯 */
+  .t-tbd{background:var(--tbd-bg);color:var(--tbd);border:1px dashed var(--tbd);}
+  .fillbar{display:inline-block;height:6px;border-radius:3px;background:#2f855a;}
+  .fillbar.low{background:var(--tbd);} .fillbar.zero{background:var(--warn);}
+
+  /* ---------- pill / chip ---------- */
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .chip{font-size:12px;background:#f1f4f9;border:1px solid var(--line);border-radius:6px;padding:3px 9px;color:var(--ink2);}
+  .chip b{color:var(--ink);font-weight:600;}
+  .chip.tbd{background:var(--tbd-bg);border:1px dashed var(--tbd);color:var(--tbd);}
+
+  /* ---------- dim tree ---------- */
+  .dimcol{border:1px solid var(--line2);border-radius:8px;background:#fff;overflow:hidden;}
+  .dimcol .hd{padding:9px 12px;font-weight:600;font-size:13px;color:#fff;}
+  .dimcol .bd{padding:10px 12px;font-size:12.5px;}
+  .dimcol .bd ul{margin:0;padding-left:17px;}
+
+  /* ---------- tbd list ---------- */
+  ol.tbd{margin:0;padding-left:22px;}
+  ol.tbd li{margin-bottom:9px;}
+  .badge{font-size:11px;padding:1px 7px;border-radius:99px;margin-left:6px;}
+  .badge.y{background:#e6f7f3;color:#0b7d70;}
+  .badge.n{background:var(--tbd-bg);color:var(--tbd);border:1px dashed var(--tbd);}
+
+  /* ---------- diff scenarios ---------- */
+  .diff{border-left:4px solid var(--diff);background:#fff;border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:12px 14px;}
+  .diff .ttl{font-weight:600;font-size:13.5px;}
+  .diff .desc{font-size:12.5px;color:var(--ink2);margin-top:3px;}
+  .diff.match{border-left-color:var(--paid);}
+  .diff.block{border-left-color:var(--warn);}
+  .diff.tbd{border-left-color:var(--tbd);background:var(--tbd-bg);border-style:dashed;}
+
+  .note{font-size:12.5px;color:var(--ink3);border-left:3px solid var(--line2);padding-left:10px;margin-top:12px;}
+  .kpi{display:flex;flex-direction:column;gap:2px;}
+  .kpi b{font-size:20px;}
+  .kpi span{font-size:12px;color:var(--ink3);}
+  .box-blue{background:var(--ok-bg);border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;}
+  .box-green{background:var(--paid-bg);border:1px solid #a7f3d0;border-radius:8px;padding:12px 14px;}
+  .box-amber{background:var(--diff-bg);border:1px solid #fde68a;border-radius:8px;padding:12px 14px;}
+  .box-red{background:var(--warn-bg);border:1px solid #fecaca;border-radius:8px;padding:12px 14px;}
+  hr.sep{border:0;border-top:1px dashed var(--line2);margin:16px 0;}
+  .mini{font-size:12px;color:var(--ink3);}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink3);}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <h1>佣金数据看板 · 业务逻辑可视化</h1>
+    <div class="sub">目的：把「数据从哪来 → 怎么分类 → 怎么统计 → 怎么核对 → 哪些规则还没定」讲清楚，供业务方逐项确认。本页不定义任何新业务规则。</div>
+    <div class="snap">
+      <div class="k"><b>610</b><span>9月满足结算流水行数</span></div>
+      <div class="k"><b>¥31,402.90</b><span>佣金金额净合计（正+负）</span></div>
+      <div class="k"><b>581 / 29</b><span>正向 / 负向流水行</span></div>
+      <div class="k"><b>217</b><span>分佣对象（去重实名）</span></div>
+      <div class="k"><b>581</b><span>关联订单（来源单据ID）</span></div>
+      <div class="k"><b>42</b><span>源表字段数</span></div>
+    </div>
+    <div class="legend" style="color:rgba(255,255,255,.8)">
+      <span><i style="background:#fff"></i>以上数字均来自附件《2026年9月-满足结算.xlsx》「分佣流水」表实际统计，非估算</span>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <div class="wrap">
+    <a href="#s1" class="on">1 · 三类数据来源与关系</a>
+    <a href="#s2">2 · 应付 vs 实付双轨</a>
+    <a href="#s3">3 · 核对流程与差异场景</a>
+    <a href="#s4">4 · 字段拆分（42列）</a>
+    <a href="#s5">5 · 统计维度结构</a>
+    <a href="#s6">6 · 看板层级与下钻</a>
+    <a href="#s7">7 · 退款与负向金额</a>
+    <a href="#s8">8 · 待确认规则</a>
+        <a href="#s85">8.5 角色切换</a>
+<a href="#s9">9 · 待确认事项清单</a>
+    <a href="commission_settlement_map.html" style="margin-left:auto;color:#0f9d8f;font-weight:600">结算逻辑图 →</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ============ 1 ============ -->
+<section id="s1">
+  <h2><span class="no">1</span>三类数据来源与关系</h2>
+  <p class="lead">三条线各自独立，<b>在未确认关联字段前不合并计算</b>。蓝色＝已有样本可校验，虚线＝尚未拿到样本。</p>
+
+  <div class="grid g3">
+    <div class="src payable">
+      <h4>① 应付佣金明细</h4>
+      <div class="meta">来源：订单级分佣流水（订单/退款单据驱动）</div>
+      <hr class="sep">
+      <div class="mini">样本：<b>2026年9月-满足结算.xlsx · 分佣流水</b><br>610 行 / 42 字段 / 581 个订单 / 217 人</div>
+      <div class="chips">
+        <span class="chip">流水方向：<b>正向 581 · 负向 29</b></span>
+        <span class="chip">结算状态：<b>全部「满足结算」</b></span>
+        <span class="chip">净额 <b>¥31,402.90</b></span>
+      </div>
+    </div>
+    <div class="src paid">
+      <h4>② 员工实付佣金</h4>
+      <div class="meta">来源：人力部门提供的实际支付数据</div>
+      <hr class="sep">
+      <div class="mini">本表<b>不含</b>任何实付信息：结算时间、结算单号 610 行全部为空。必须由人力部门数据补齐后关联。</div>
+      <div class="chips"><span class="chip tbd">字段清单待提供</span><span class="chip tbd">关联键待确认</span></div>
+    </div>
+    <div class="src paid">
+      <h4>③ 非员工创作者实付佣金</h4>
+      <div class="meta">来源：财务部门提供的实际支付数据</div>
+      <hr class="sep">
+      <div class="mini">同样不在本表内。创作者侧支付可能经由第三方平台（涉及约 6.8% 费用，口径待确认）。</div>
+      <div class="chips"><span class="chip tbd">字段清单待提供</span><span class="chip tbd">平台费用口径待确认</span></div>
+    </div>
+  </div>
+
+  <div class="arrowdown">▼</div>
+
+  <div class="card">
+    <div class="flow">
+      <div class="step"><div class="t">Step 0</div><div class="n">各自独立入湖</div><div class="mini">三张表按原样落地，不做任何提前合并</div></div>
+      <div class="step"><div class="t">Step 1</div><div class="n">分别统计口径</div><div class="mini">应付按「结算状态=满足结算」统计；实付按支付记录统计</div></div>
+      <div class="step"><div class="t">Step 2</div><div class="n">确认关联键</div><div class="mini">人员 / 订单 / 商品 / 时间，逐项验证能否对上</div></div>
+      <div class="step"><div class="t">Step 3</div><div class="n">生成对照视图</div><div class="mini">应付金额 · 实付金额 · 差异，三列并排</div></div>
+      <div class="step"><div class="t">Step 4</div><div class="n">差异归因（人工）</div><div class="mini">只提示候选场景，不自动判定异常</div></div>
+    </div>
+    <div class="note">匹配使用哪些字段、是否一对多、差异如何归类 —— <b>均需根据实付数据实际字段确认</b>，本页不做假定。</div>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="s2">
+  <h2><span class="no">2</span>应付佣金 与 实付佣金：两条独立口径</h2>
+  <p class="lead">两者<b>不是同一个指标</b>，也不能默认金额相等。看板必须并列呈现，并把差异作为独立观察对象。</p>
+
+  <div class="grid g2">
+    <div class="card" style="border-top:3px solid var(--payable)">
+      <h4 style="margin:0 0 6px">应付佣金（应然）</h4>
+      <div class="mini">订单产生即记账，含正向销售与负向退款。</div>
+      <div class="grid g3" style="margin-top:12px">
+        <div class="kpi"><b style="color:var(--payable)">¥33,036.30</b><span>正向流水合计</span></div>
+        <div class="kpi"><b style="color:var(--warn)">−¥1,633.40</b><span>负向流水合计</span></div>
+        <div class="kpi"><b>¥31,402.90</b><span>净额（含退款）</span></div>
+      </div>
+      <hr class="sep">
+      <div class="mini"><b>时间口径</b>：本表只有「满足结算时间」与「流水生成时间」两个时点，<b>没有订单月份字段</b>；订单月份需回到来源单据ID对应的订单表取。</div>
+      <div class="chips"><span class="chip">员工 <b>¥17,953.20</b></span><span class="chip">创作者 <b>¥13,449.70</b></span></div>
+    </div>
+
+    <div class="card" style="border-top:3px solid var(--paid)">
+      <h4 style="margin:0 0 6px">实付佣金（实然）</h4>
+      <div class="mini">来自人力 / 财务两条支付记录，本表内无任何对应字段。</div>
+      <div class="grid g3" style="margin-top:12px">
+        <div class="kpi"><b style="color:var(--ink3)">—</b><span>员工实付合计</span></div>
+        <div class="kpi"><b style="color:var(--ink3)">—</b><span>创作者实付合计</span></div>
+        <div class="kpi"><b style="color:var(--ink3)">—</b><span>实付总额</span></div>
+      </div>
+      <hr class="sep">
+      <div class="mini"><b>时间口径</b>：实付以<b>支付月份</b>为准，与应付的订单月份天然错位（例如订单完成后还需 +10 个自然日才满足结算）。</div>
+      <div class="chips"><span class="chip tbd">数据未接入</span><span class="chip tbd">支付月份字段待确认</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;border-top:3px solid var(--diff)">
+    <div class="grid g3">
+      <div>
+        <h4 style="margin:0 0 6px">差异 = 应付 − 实付</h4>
+        <div class="mini">差异是看板的核心观察对象，<b>不等于异常</b>。差异必须能一路下钻到具体人员 / 订单 / 商品。</div>
+      </div>
+      <div class="box-amber">
+        <div class="mini"><b>三种月份口径不能混用</b></div>
+        <div style="font-size:12.5px;margin-top:6px">① 订单月份（下单）　② 满足结算月份（本表唯一有值的月份）　③ 实际支付月份</div>
+        <div class="mini" style="margin-top:6px">趋势图必须明确标注采用哪一种，切换口径要能一键切换。</div>
+      </div>
+      <div class="box-blue">
+        <div class="mini"><b>本表给出的关键证据</b></div>
+        <div style="font-size:12.5px;margin-top:6px">610 行状态全部为「满足结算」，但<b>结算时间、结算单号 100% 为空</b> → 「满足结算」仅代表达到付款条件，<b>不代表已经付款</b>。应付与实付必须在两套数据中分别统计。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="s3">
+  <h2><span class="no">3</span>核对流程与差异场景</h2>
+  <p class="lead">下面 7 类是<b>需要考虑的核对场景</b>，不代表系统已具备自动识别能力。判定规则与优先级待确认。</p>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="flow">
+      <div class="step"><div class="t">输入 A</div><div class="n">应付佣金明细</div><div class="mini">订单级，含正负向</div></div>
+      <div class="step"><div class="t">输入 B</div><div class="n">员工实付数据</div><div class="mini">人力提供</div></div>
+      <div class="step"><div class="t">输入 C</div><div class="n">创作者实付数据</div><div class="mini">财务提供</div></div>
+      <div class="step"><div class="t">处理</div><div class="n">按人 / 单 / 品 / 月关联</div><div class="mini">关联键待确认</div></div>
+      <div class="step"><div class="t">输出</div><div class="n">应付 · 实付 · 差异</div><div class="mini">三列并排展示</div></div>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="diff match"><div class="ttl">① 匹配一致</div><div class="desc">应付与实付能对上，金额一致。<span class="mini">（需先定义“一致”的容差：是否允许分位误差、是否允许跨月累计）</span></div></div>
+    <div class="diff"><div class="ttl">② 有应付 · 无实付</div><div class="desc">已满足结算但未找到支付记录。可能原因：尚未到支付周期、待签约、拒绝收款、不符合发放条件。</div></div>
+    <div class="diff"><div class="ttl">③ 有实付 · 无应付</div><div class="desc">支付了但本表找不到对应应付流水。可能原因：跨期支付（上月订单本月付）、映射错误、补发。</div></div>
+    <div class="diff"><div class="ttl">④ 金额不一致</div><div class="desc">人对上了但金额不同。可能原因：部分退款、平台费用扣减、分佣比例调整、多笔合并支付。</div></div>
+    <div class="diff tbd"><div class="ttl">⑤ 不符合发放条件</div><div class="desc">官方账号不参与结算；部分订单/人员不发放；班主任的 999 训练营订单是否计额外 APP 佣金 —— <b>条件清单待业务确认</b>，不写成自动规则。</div></div>
+    <div class="diff tbd"><div class="ttl">⑥ 跨月错位</div><div class="desc">订单月份 ≠ 支付月份，当月无法直接对应。<b>本表无订单月份字段</b>，需外部订单表补齐后才能判定。</div></div>
+    <div class="diff tbd"><div class="ttl">⑦ 映射缺失</div><div class="desc">人员或商品映射错误/缺失导致无法关联。<b>证据</b>：创作者 322 行的「命中部门名称」100% 为空，无团队归属；创作者中仅 76/322 行有员工ID。</div></div>
+  </div>
+  <div class="note">以上均为<b>待核对场景</b>，页面只做提示与筛选，<b>不自动判定异常、不自动归类原因</b>。</div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="s4">
+  <h2><span class="no">4</span>字段拆分：42 列按节点归类</h2>
+  <p class="lead">以附件「分佣流水」表为准，把 42 个字段拆到 8 个节点。每个字段标注在业务链路中的角色，以及<b>本表实测的非空率</b>（非空率＝该字段能否承担关联/统计职责的直接证据）。</p>
+
+  <div class="card" style="margin-bottom:12px">
+    <div class="legend">
+      <span><span class="tag t-key">主键</span> 可用于关联/去重</span>
+      <span><span class="tag t-dim">维度</span> 用于分组统计</span>
+      <span><span class="tag t-msr">度量</span> 金额/数量</span>
+      <span><span class="tag t-src">追溯</span> 退款/回滚链路</span>
+      <span><span class="tag t-tbd">待确认</span> 口径未定</span>
+      <span style="color:var(--ink2)">非空率＝该字段在 610 行中的实际有值行数，决定它能否承担关联/统计职责</span>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <!-- 节点1 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 A · 流水标识 <span class="mini">（6 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">流水ID</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td class="mono">613260930085529014</td></tr>
+        <tr><td class="mono">流水方向</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>正向 581 / 负向 29</td></tr>
+        <tr><td class="mono">业务类型</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>商城（唯一值）</td></tr>
+        <tr><td class="mono">来源单据类型</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>订单（唯一值）</td></tr>
+        <tr><td class="mono">来源单据ID</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td>订单号，去重 581 个</td></tr>
+        <tr><td class="mono">来源业单据明细</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td>订单明细行号</td></tr>
+      </table>
+    </div>
+
+    <!-- 节点2 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 B · 分佣对象（人员） <span class="mini">（7 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">分佣对象实名</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td>冯霞 · 去重 217 人</td></tr>
+        <tr><td class="mono">分佣角色类型</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td><b>员工 288 / 创作者 322</b></td></tr>
+        <tr><td class="mono">命中部门名称</td><td><span class="tag t-dim">维度</span></td><td>288/610</td><td>员工 100% 有值；<b>创作者 0%</b></td></tr>
+        <tr><td class="mono">分佣对象-员工ID</td><td><span class="tag t-key">主键</span></td><td>364/610</td><td>员工 288/288；创作者仅 76/322</td></tr>
+        <tr><td class="mono">分佣对象-用户ID</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td>唯一 100% 覆盖的人员键</td></tr>
+        <tr><td class="mono">分佣对象-手机号</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td>182****7937（候选关联键）</td></tr>
+        <tr><td class="mono">分佣对象身份证号</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td>敏感字段，建议看板内脱敏</td></tr>
+      </table>
+      <div class="note"><b>关联结论：</b>人员关联建议优先用「分佣对象-用户ID」（610/610 全覆盖）；员工ID 不能单独区分员工/创作者，必须搭配「分佣角色类型」。</div>
+    </div>
+
+    <!-- 节点3 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 C · 商品 <span class="mini">（3 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">商品ID</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td class="mono">102260616104417014</td></tr>
+        <tr><td class="mono">商品名称</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>5 个品（4 本书 + 1 训练营）</td></tr>
+        <tr><td class="mono">商品分类</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>育儿百科 500 / 花径原生家庭营 110</td></tr>
+      </table>
+      <div class="chips">
+        <span class="chip">《无分别的爱》<b>¥2,619.00</b></span>
+        <span class="chip">《家庭里的心理学》全三册<b>¥7,344.00</b></span>
+        <span class="chip">《妈妈，请这样爱我》<b>¥4,684.80</b></span>
+        <span class="chip">《遇见好老师》<b>¥764.40</b></span>
+        <span class="chip">花径原生家庭营-7天线上父母训练营<b>¥15,990.70</b></span>
+      </div>
+      <div class="note">图书＝4 本（育儿百科类）；999 训练营对应「花径原生家庭营-7天线上父母训练营」，分佣基数 999 元。</div>
+    </div>
+
+    <!-- 节点4 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 D · 渠道与场景 <span class="mini">（6 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">下单渠道</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>UGC橱窗 324 / 直播间 165 / UGC作品 121</td></tr>
+        <tr><td class="mono">场景类型</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>与下单渠道取值完全一致</td></tr>
+        <tr><td class="mono">下单客户端</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>h5 / 安卓 /…</td></tr>
+        <tr><td class="mono">直播/作品/橱窗ID</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td class="mono">xy202504074925</td></tr>
+        <tr><td class="mono">购买用户群</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>所有用户 / 书课包用户</td></tr>
+        <tr><td class="mono">购买用户ID</td><td><span class="tag t-key">主键</span></td><td>610/610</td><td>下单人（≠分佣对象）</td></tr>
+      </table>
+      <div class="note">下单渠道金额：UGC橱窗 ¥16,500.10 / 直播间 ¥9,130.20 / UGC作品 ¥5,772.60。可作为佣金构成的补充切片。</div>
+    </div>
+
+    <!-- 节点5 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 E · 分佣规则与金额 <span class="mini">（10 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">佣金金额</td><td><span class="tag t-msr">度量</span></td><td>610/610</td><td><b>核心度量</b>，净额 ¥31,402.90</td></tr>
+        <tr><td class="mono">分佣基数</td><td><span class="tag t-msr">度量</span></td><td>610/610</td><td>45/128/180/999（可为负）</td></tr>
+        <tr><td class="mono">佣金计算方式</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>按比例 533 / 固定金额 77</td></tr>
+        <tr><td class="mono">分佣比例/值</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>30%（533 行）/ ¥100（77 行）</td></tr>
+        <tr><td class="mono">命中的分佣配置ID</td><td><span class="tag t-src">追溯</span></td><td>610/610</td><td class="mono">611260901144927018</td></tr>
+        <tr><td class="mono">命中的分佣规则ID</td><td><span class="tag t-src">追溯</span></td><td>610/610</td><td>规则变更溯源用</td></tr>
+        <tr><td class="mono">规则快照</td><td><span class="tag t-src">追溯</span></td><td>610/610</td><td>JSON，含 extInfo</td></tr>
+        <tr><td class="mono">分佣模式</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>普通分佣（唯一值）</td></tr>
+        <tr><td class="mono">分佣层级</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>普通分佣（唯一值）</td></tr>
+        <tr><td class="mono">币种</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>CNY（唯一值）</td></tr>
+      </table>
+      <div class="note"><b>口径提醒：</b>同一商品存在两种算法 —— 999 训练营 72 行按固定 ¥100、32 行按 30%（基数均为 999）。构成分析需按算法分别统计，不能只按商品汇总。</div>
+    </div>
+
+    <!-- 节点6 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 F · 售后与退款 <span class="mini">（3 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">回指正向流水ID</td><td><span class="tag t-src">追溯</span></td><td>29/610</td><td><b>29 条负向流水 100% 回填</b></td></tr>
+        <tr><td class="mono">业务售后类型</td><td><span class="tag t-dim">维度</span></td><td>29/610</td><td>部分退款 23 / 退学退费 6</td></tr>
+        <tr><td class="mono">退款业务单据</td><td><span class="tag t-src">追溯</span></td><td>29/610</td><td class="mono">203260929220217017</td></tr>
+      </table>
+      <div class="note"><b>可直接用于防重复扣减：</b>29 条负向流水全部指向一条正向流水，且 29 个订单各恰好 2 条流水（一正一负），配对关系完整、无重复。</div>
+    </div>
+
+    <!-- 节点7 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 G · 结算状态 <span class="mini">（5 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">结算状态</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>满足结算（唯一值）</td></tr>
+        <tr><td class="mono">满足结算时间</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>2026-09（本表唯一时间口径）</td></tr>
+        <tr><td class="mono">结算时间</td><td><span class="tag t-tbd">待确认</span></td><td><b>0/610</b></td><td>全空 → 实付不在本表</td></tr>
+        <tr><td class="mono">结算单号</td><td><span class="tag t-tbd">待确认</span></td><td><b>0/610</b></td><td>全空 → 无支付批次标识</td></tr>
+        <tr><td class="mono">收款公司</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>花径教育咨询 ¥26,368.30 / 花径科技 ¥5,034.60</td></tr>
+      </table>
+      <div class="note"><b>重要：</b>结算时间/结算单号全空，说明「满足结算」只是<b>达到付款条件</b>，不是已付款。应付与实付必须分开统计 —— 这条由数据本身直接证明。</div>
+    </div>
+
+    <!-- 节点8 -->
+    <div class="card">
+      <h4 style="margin:0 0 8px">节点 H · 时间戳 <span class="mini">（2 字段）</span></h4>
+      <table>
+        <tr><th>字段</th><th>角色</th><th>非空率</th><th>实测样例 / 说明</th></tr>
+        <tr><td class="mono">流水生成时间</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td class="mono">2026-09-29 10:28:33</td></tr>
+        <tr><td class="mono">最近更新时间</td><td><span class="tag t-dim">维度</span></td><td>610/610</td><td>用于增量同步</td></tr>
+      </table>
+      <div class="note"><b>缺失：</b>本表<b>没有订单下单时间</b>。要做「订单月份 vs 支付月份」对比，必须回订单表取下单时间，口径待确认。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="s5">
+  <h2><span class="no">5</span>统计维度结构（可交叉，非互斥）</h2>
+  <p class="lead">六类维度彼此独立，看板需支持任意组合筛选。绿色＝本表字段可支撑，橙色虚线＝本表缺字段、需外部数据或名单。</p>
+
+  <div class="grid g3">
+    <div class="dimcol">
+      <div class="hd" style="background:#334155">① 时间维度</div>
+      <div class="bd">
+        <ul>
+          <li>订单月份 <span class="badge n">本表无，需订单表</span></li>
+          <li>满足结算月份 <span class="badge y">本表有</span></li>
+          <li>实际支付月份 <span class="badge n">实付数据提供</span></li>
+        </ul>
+        <div class="note" style="margin-top:8px">首期关注 7 / 8 / 9 月。三种月份<b>不可混用</b>，图表须标注口径并支持切换。</div>
+      </div>
+    </div>
+
+    <div class="dimcol">
+      <div class="hd" style="background:var(--payable)">② 人员类型</div>
+      <div class="bd">
+        <ul>
+          <li>员工 <span class="badge y">288 行 ¥17,953.20</span></li>
+          <li>非员工创作者 <span class="badge y">322 行 ¥13,449.70</span></li>
+        </ul>
+        <div class="note" style="margin-top:8px">字段：分佣角色类型（610/610 全覆盖），可直接用于切分。</div>
+      </div>
+    </div>
+
+    <div class="dimcol">
+      <div class="hd" style="background:var(--payable)">③ 员工所属团队</div>
+      <div class="bd">
+        <ul>
+          <li>班主任组 122 · ¥8,268.50</li>
+          <li>会员督导导师 93 · ¥5,076.00</li>
+          <li>成长带练师组 17 · ¥654.10</li>
+          <li>启蒙助教 15 · ¥885.00</li>
+          <li>启蒙老师 13 · ¥1,212.60</li>
+          <li>小组助教 8 · ¥259.50</li>
+          <li>线上书童 8 · ¥782.10</li>
+          <li>小组老师 6 · ¥396.30</li>
+          <li>售后客服组 2 · ¥29.10</li>
+          <li>APP运营中心 2 · ¥313.20</li>
+          <li>专项营培训组 1 · ¥38.40</li>
+        </ul>
+        <div class="note" style="margin-top:8px">字段：命中部门名称，<b>实测 11 个非空值</b>（需求中“6 个团队”口径待对齐）。仅覆盖员工侧。</div>
+      </div>
+    </div>
+
+    <div class="dimcol">
+      <div class="hd" style="background:var(--payable)">④ 人员角色</div>
+      <div class="bd">
+        <ul>
+          <li>班主任 / 启蒙老师 / 助教 …</li>
+        </ul>
+        <div class="note" style="margin-top:8px">本表<b>没有独立的“角色”字段</b>，团队与角色混在「命中部门名称」一个字段里。角色完整分类 <span class="tag t-tbd">待确认</span>。</div>
+      </div>
+    </div>
+
+    <div class="dimcol">
+      <div class="hd" style="background:var(--tbd)">⑤ 创作者类型</div>
+      <div class="bd">
+        <ul>
+          <li>IP 孵化类 <span class="badge n">名单/依据待提供</span></li>
+          <li>纯草根类 <span class="badge n">名单/依据待提供</span></li>
+        </ul>
+        <div class="note" style="margin-top:8px">本表<b>无任何字段</b>可区分这两类：创作者 322 行的部门字段全空，也无标签列。必须由业务提供名单或判定依据。</div>
+      </div>
+    </div>
+
+    <div class="dimcol">
+      <div class="hd" style="background:var(--paid)">⑥ 商品维度</div>
+      <div class="bd">
+        <ul>
+          <li>999 训练营 <span class="badge y">花径原生家庭营 · 110 行 ¥15,990.70</span></li>
+          <li>图书 <span class="badge y">育儿百科 · 500 行 ¥15,412.20</span></li>
+        </ul>
+        <div class="chips">
+          <span class="chip">《家庭里的心理学》全三册 137 行</span>
+          <span class="chip">《无分别的爱》183 行</span>
+          <span class="chip">《妈妈，请这样爱我》129 行</span>
+          <span class="chip">《遇见好老师》51 行</span>
+        </div>
+        <div class="note" style="margin-top:8px">商品分类 2 类、商品名称 5 个（4 本书）。书目的“核心 3—4 本”口径 <span class="tag t-tbd">待确认</span>。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="mini" style="margin-bottom:8px"><b>交叉示例（本表已可跑通的组合）</b></div>
+    <div class="grid g4">
+      <div class="box-blue">商品分类 × 部门<br><span class="mini">育儿百科×会员督导导师 93 行 / 花径原生家庭营×班主任组 74 行 …</span></div>
+      <div class="box-blue">角色类型 × 商品<br><span class="mini">员工 × 训练营 / 创作者 × 图书 …</span></div>
+      <div class="box-blue">渠道 × 商品<br><span class="mini">UGC橱窗 / 直播间 / UGC作品 三者分别与图书、训练营交叉</span></div>
+      <div class="box-green">时间 × 以上全部<br><span class="mini">按满足结算月份切片；订单月份切片需外部订单表</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="s6">
+  <h2><span class="no">6</span>看板层级与下钻关系</h2>
+  <p class="lead">从总览逐层下钻到明细，每一层的可下钻深度取决于字段是否具备（见第 4 节非空率）。</p>
+
+  <div class="card">
+    <div class="flow">
+      <div class="step"><div class="t">L1</div><div class="n">整体概览</div><div class="mini">应付 / 实付 / 差异 / 员工 vs 创作者</div></div>
+      <div class="step"><div class="t">L2</div><div class="n">构成分析</div><div class="mini">按团队·角色·创作者类型·商品·月份拆分金额与占比</div></div>
+      <div class="step"><div class="t">L3</div><div class="n">月度趋势</div><div class="mini">7/8/9 月应付与实付变化，须标注月份口径</div></div>
+      <div class="step"><div class="t">L4</div><div class="n">人员排名</div><div class="mini">按订单数 / 应付 / 实付排序，口径由使用者选择，不默认</div></div>
+      <div class="step"><div class="t">L5</div><div class="n">明细与导出</div><div class="mini">人员 → 订单 → 流水（含正负向配对）</div></div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card">
+      <h4 style="margin:0 0 8px">下钻能力对照（以本表字段为限）</h4>
+      <table>
+        <tr><th>下钻路径</th><th>是否可通</th><th>依据字段</th></tr>
+        <tr><td>总览 → 员工 / 创作者</td><td><span class="badge y">可通</span></td><td class="mono">分佣角色类型</td></tr>
+        <tr><td>员工 → 团队 → 人</td><td><span class="badge y">可通</span></td><td class="mono">命中部门名称 + 用户ID</td></tr>
+        <tr><td>创作者 → IP孵化 / 纯草根</td><td><span class="badge n">缺字段</span></td><td>无对应列，需外部名单</td></tr>
+        <tr><td>人员 → 订单 → 流水</td><td><span class="badge y">可通</span></td><td class="mono">来源单据ID + 流水ID</td></tr>
+        <tr><td>流水 → 对应退款流水</td><td><span class="badge y">可通</span></td><td class="mono">回指正向流水ID（29/29 完整）</td></tr>
+        <tr><td>商品 → 具体书目</td><td><span class="badge y">可通</span></td><td class="mono">商品ID + 商品名称</td></tr>
+        <tr><td>应付 → 实付记录</td><td><span class="badge n">缺数据</span></td><td>结算时间/结算单号全空，需实付数据</td></tr>
+        <tr><td>按订单月份切片</td><td><span class="badge n">缺字段</span></td><td>本表无下单时间，需订单表</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 8px">占比与排序的口径约束</h4>
+      <div class="box-amber">
+        <div class="mini"><b>占比分母必须对应指标</b></div>
+        <div style="font-size:12.5px;margin-top:6px">应付占比的分母＝应付总额；实付占比的分母＝实付总额。<b>不得用实付分子去除应付分母</b>。</div>
+      </div>
+      <div class="box-amber" style="margin-top:10px">
+        <div class="mini"><b>排序维度由使用者选择</b></div>
+        <div style="font-size:12.5px;margin-top:6px">订单数量 / 应付佣金 / 实付佣金 / 差异 —— 页面提供切换，<b>不默认用其中一个替代另一个</b>。</div>
+      </div>
+      <div class="box-red" style="margin-top:10px">
+        <div class="mini"><b>创作者团队占比不可计算</b></div>
+        <div style="font-size:12.5px;margin-top:6px">创作者侧部门字段 0% 覆盖，任何“创作者团队构成”图表在数据补齐前都是假数据，暂不提供。</div>
+      </div>
+      <div class="note">明细导出范围、字段与权限要求 <span class="tag t-tbd">待确认</span>（身份证号等敏感字段建议默认不出）。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="s7">
+  <h2><span class="no">7</span>退款、负向金额与支付时间差</h2>
+  <p class="lead">负向金额必须保留符号并单独可查，不能与正向混在一起净额化后丢失信息。</p>
+
+  <div class="grid g4">
+    <div class="card"><div class="kpi"><b>29</b><span>负向流水行（占 4.8%）</span></div></div>
+    <div class="card"><div class="kpi"><b style="color:var(--warn)">−¥1,633.40</b><span>负向金额合计</span></div></div>
+    <div class="card"><div class="kpi"><b>23 / 6</b><span>部分退款 / 退学退费</span></div></div>
+    <div class="card"><div class="kpi"><b>29 / 29</b><span>负向已回指正流水（配对完整）</span></div></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card">
+      <h4 style="margin:0 0 8px">负向金额的三种构成（本表实证）</h4>
+      <table>
+        <tr><th>商品分类</th><th>基数</th><th>算法</th><th>行数</th></tr>
+        <tr><td>育儿百科</td><td class="mono">-45</td><td>30%</td><td>4</td></tr>
+        <tr><td>育儿百科</td><td class="mono">-128</td><td>30%</td><td>11</td></tr>
+        <tr><td>育儿百科</td><td class="mono">-180</td><td>30%</td><td>3</td></tr>
+        <tr><td>花径原生家庭营</td><td class="mono">-999</td><td>¥100 固定</td><td>5</td></tr>
+        <tr><td>花径原生家庭营</td><td class="mono">-999</td><td>30%</td><td>3</td></tr>
+        <tr><td>其他（部分退款合计）</td><td class="mono">—</td><td>—</td><td>3</td></tr>
+      </table>
+      <div class="note">负向与正向<b>同订单、同规则</b>，只是基数取负 —— 说明退款已在应付侧按原规则反向冲销。</div>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 8px">防重复扣减的机制</h4>
+      <div class="box-green">
+        <div class="mini"><b>可用机制（数据已具备）</b></div>
+        <div style="font-size:12.5px;margin-top:6px">用「回指正向流水ID」把负向流水挂回原正向流水：<br>581 个订单中 552 个只有 1 条正向流水，29 个恰有 2 条（一正一负），<b>无一对多、无孤儿负向</b>。据此可保证一笔退款只扣一次。</div>
+      </div>
+      <hr class="sep">
+      <div class="mini"><b>仍待确认</b></div>
+      <div class="chips">
+        <span class="chip tbd">退款率公式</span>
+        <span class="chip tbd">退款金额归属月份</span>
+        <span class="chip tbd">退款与原订单的关联方式</span>
+        <span class="chip tbd">负向是否已在应付中扣除</span>
+      </div>
+      <div class="note">在以上四项确认前，<b>不计算退款率</b>，只展示正负向流水与配对关系。</div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card" style="border-top:3px dashed var(--tbd)">
+      <h4 style="margin:0 0 6px">订单完成与结算时点规则 <span class="chip" style="background:var(--teal-l);color:var(--teal)">10-22 已更正</span></h4>
+      <div class="mini"><b>订单完成</b>：图书＝学员确认收货（学员主动确认；未主动确认的，物流签收后 7 个自然日系统自动确认）；999 原生营＝付款成功即完成。<br><b>满足结算</b>：订单完成后 <b>+10 个自然日</b>（统一适用）。</div>
+      <div class="chips">
+        <span class="chip tbd">本表无「确认收货 / 签收时间」字段，无法精确排期</span>
+      </div>
+      <div class="note">规则口径已确认，但应付表缺确认收货时间字段，<b>预计支付日期只能按订单时间粗估</b>，需数据侧补字段后才可精确计算。</div>
+    </div>
+    <div class="card" style="border-top:3px dashed var(--tbd)">
+      <h4 style="margin:0 0 6px">约 6.8% 财务/平台费用</h4>
+      <div class="mini">已知：财务通过第三方平台支付时涉及约 6.8% 的税费或平台费用。</div>
+      <div class="chips">
+        <span class="chip tbd">6.8% 的具体含义</span>
+        <span class="chip tbd">计算基数</span>
+        <span class="chip tbd">适用人员范围</span>
+        <span class="chip tbd">是否覆盖全部实付</span>
+        <span class="chip tbd">是否计入本看板</span>
+      </div>
+      <div class="note">本阶段<b>只保留信息、不参与计算</b>。佣金预算 / 费用预估属后续方向，本次不实现。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="s8">
+  <h2><span class="no">8</span>差异成因：已知项 vs 待确认规则</h2>
+  <p class="lead">左列为业务方已提出、可作为人工核对线索的原因；右列为<b>确认前不得写成自动规则</b>的判定条件。</p>
+  <div class="grid g2">
+    <div class="card">
+      <h4 style="margin:0 0 8px">已提出的原因（仅作核对线索）</h4>
+      <table>
+        <tr><th>#</th><th>原因</th><th>本表可验证性</th></tr>
+        <tr><td>1</td><td>官方账号不一定参与佣金结算</td><td><span class="badge n">需账号名单</span></td></tr>
+        <tr><td>2</td><td>部分订单/人员不符合发放条件</td><td><span class="badge n">条件清单待确认</span></td></tr>
+        <tr><td>3</td><td>班主任 999 训练营订单的额外 APP 佣金资格</td><td><span class="badge n">规则待确认</span></td></tr>
+        <tr><td>4</td><td>创作者拒绝收款 / 尚未签约</td><td><span class="badge n">需签约状态数据</span></td></tr>
+        <tr><td>5</td><td>人员、商品映射错误</td><td><span class="badge y">可部分校验（部门空值率）</span></td></tr>
+        <tr><td>6</td><td>订单月份 ≠ 支付月份</td><td><span class="badge y">本表仅满足结算月份</span></td></tr>
+        <tr><td>7</td><td>退款/退单产生负向金额</td><td><span class="badge y">本表 29 条，可完整追溯</span></td></tr>
+      </table>
+      <div class="note">本表可直接定位第 5、6、7 项的数据表现；第 1—4 项需要外部名单或状态字段。</div>
+    </div>
+    <div class="card" style="background:var(--tbd-bg);border:1px dashed var(--tbd)">
+      <h4 style="margin:0 0 8px;color:var(--tbd)">确认前不得固化为规则的内容</h4>
+      <ol class="tbd" style="font-size:13px">
+        <li>“不符合发放条件”的判定条件清单</li>
+        <li>官方账号 / 不参与结算账号的名单</li>
+        <li>班主任 999 训练营是否计 APP 佣金</li>
+        <li>创作者签约状态与拒收回执的取数字段</li>
+        <li>差异状态的判定规则与优先级（匹配/未匹配/金额不一致的排序）</li>
+        <li>订单月份、支付月份、退款月份的统计口径</li>
+        <li><s>图书 10 工作日规则的适用范围与起算点</s> → 已更正（10-22）：订单完成后 +10 自然日，统一适用</li>
+        <li>6.8% 费用的计算方式与适用范围</li>
+      </ol>
+      <div class="note" style="border-left-color:var(--tbd)">以上一律标记为「待确认」，页面<b>不编造差异原因、不把未匹配记录自动认定为异常</b>。</div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============ 8.5 ============ -->
+<section id="s85">
+  <h2><span class="no">8.5</span>特殊场景：发放角色切换（分段结算）</h2>
+  <p class="lead">人的员工 / 创作者身份可能在月中切换，佣金按<b>行为发生时的身份</b>分段结算。口径来源：韩浩旭 2026-09-09 群内说明，2026-10-22 并入。</p>
+
+  <div class="card">
+    <div class="grid g2">
+      <div class="box-amber">
+        <div class="mini"><b>场景 A · 员工 → 离职 → 次月参与分佣</b></div>
+        <div style="font-size:12.5px;margin-top:6px"><b>在职期间</b>：按工资结算发放。<br><b>离职之后</b>：按创作者规则结算发放。<br><span class="mini">同一个人同一个月出现两种结算方式。</span></div>
+      </div>
+      <div class="box-blue">
+        <div class="mini"><b>场景 B · 创作者 → 入职 → 次月参与分佣</b></div>
+        <div style="font-size:12.5px;margin-top:6px"><b>暂无此类案例。</b><br>先在流水上<b>记录发放角色</b>，待实际发放时再确认具体方式。<br><span class="mini">不为未发生的场景写死规则。</span></div>
+      </div>
+    </div>
+    <hr class="sep">
+    <div class="box-green">
+      <div class="mini"><b>面板实现要求</b></div>
+      <div style="font-size:12.5px;margin-top:6px">流水上保留 <b>「发放角色」字段</b>；切换月的人员<b>分段展示</b>（在职段 / 离职段），支持按段筛选与导出。</div>
+    </div>
+    <div class="note">完整结算链路见 <a href="commission_settlement_map.html" style="color:var(--payable)">《佣金结算逻辑图》</a> 第 7 节。</div>
+  </div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="s9">
+  <h2><span class="no">9</span>待确认事项清单（12 项）</h2>
+  <p class="lead">前 3 项已通过附件字段部分回答，其余需业务 / 人力 / 财务提供。</p>
+  <div class="card">
+    <table>
+      <tr><th style="width:32px">#</th><th style="width:34%">待确认事项</th><th>当前状态（基于 9 月样本）</th><th style="width:110px">需谁确认</th></tr>
+      <tr><td>1</td><td>三类数据的实际字段</td><td><span class="badge y">部分</span> 应付侧已拿到 42 字段；员工实付、创作者实付<b>尚未提供</b></td><td>人力 / 财务</td></tr>
+      <tr><td>2</td><td>三类数据用什么字段关联人员、订单、商品</td><td><span class="badge y">候选</span> 人员＝分佣对象-用户ID（610/610）或手机号（610/610）；订单＝来源单据ID；商品＝商品ID。是否可用取决于实付侧是否有同名字段</td><td>人力 / 财务</td></tr>
+      <tr><td>3</td><td>实付数据能否关联到具体订单</td><td><span class="badge n">未知</span> 本表结算单号 0/610 全空，无法自证</td><td>人力 / 财务</td></tr>
+      <tr><td>4</td><td>员工 6 个团队的正式名称</td><td><span class="badge n">不一致</span> 本表实测 <b>11 个</b>非空部门值（班主任组、会员督导导师、成长带练师组、启蒙助教、启蒙老师、小组助教、线上书童、小组老师、售后客服组、APP运营中心、专项营培训组）</td><td>业务 / 人力</td></tr>
+      <tr><td>5</td><td>员工角色完整分类</td><td><span class="badge n">缺</span> 无独立角色字段，团队与角色混在「命中部门名称」</td><td>业务 / 人力</td></tr>
+      <tr><td>6</td><td>IP 孵化类 / 纯草根类名单或分类依据</td><td><span class="badge n">缺</span> 本表无任何可区分字段（创作者部门 0% 覆盖）</td><td>业务</td></tr>
+      <tr><td>7</td><td>999 训练营与图书的商品清单</td><td><span class="badge y">基本明确</span> 训练营 1 个（花径原生家庭营-7天线上父母训练营）；图书 4 本。是否还有其他品 <span class="tag t-tbd">待确认</span></td><td>业务</td></tr>
+      <tr><td>8</td><td>哪些人员 / 订单 / 账号符合发放条件</td><td><span class="badge n">缺</span> 需条件清单</td><td>业务</td></tr>
+      <tr><td>9</td><td>订单月份、支付月份、退款月份统计口径</td><td><span class="badge n">缺</span> 本表只有满足结算月份与流水生成时间</td><td>业务 / 财务</td></tr>
+      <tr><td>10</td><td>结算时点规则</td><td><span class="badge y">已明确</span> 订单完成后 +10 自然日；仍缺确认收货 / 签收时间字段 <span class="tag t-tbd">字段缺失</span></td><td>数据</td></tr>
+      <tr><td>11</td><td>6.8% 费用的计算方式与适用范围</td><td><span class="badge n">缺</span> 仅保留信息，不参与计算</td><td>财务</td></tr>
+      <tr><td>12</td><td>数据更新频率、导出范围与权限</td><td><span class="badge n">缺</span> 含身份证号等敏感字段，建议默认脱敏</td><td>业务 / 数据</td></tr>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="grid g3">
+      <div class="box-green">
+        <div class="mini"><b>本阶段已可落地（有字段支撑）</b></div>
+        <div style="font-size:12.5px;margin-top:6px">
+          · 应付侧整体概览与正负向拆分<br>
+          · 员工 / 创作者构成<br>
+          · 员工 11 个团队构成<br>
+          · 2 类商品 + 4 本书构成<br>
+          · 渠道场景构成<br>
+          · 按满足结算月份的趋势<br>
+          · 人员排名（应付口径）<br>
+          · 订单 → 流水 → 退款配对下钻
+        </div>
+      </div>
+      <div class="box-amber">
+        <div class="mini"><b>需补齐后才能落地</b></div>
+        <div style="font-size:12.5px;margin-top:6px">
+          · 实付侧全部指标（等人力 / 财务数据）<br>
+          · 应付 vs 实付差异与核对<br>
+          · 创作者 IP孵化 / 纯草根构成<br>
+          · 按订单月份的趋势<br>
+          · 人员排名（实付口径）<br>
+          · 退款率与销售质量分析
+        </div>
+      </div>
+      <div class="box-blue">
+        <div class="mini"><b>后续方向（本次不实现）</b></div>
+        <div style="font-size:12.5px;margin-top:6px">
+          · 创作者增长 / 下降自动发现<br>
+          · 佣金异常识别<br>
+          · 销售构成变化分析<br>
+          · 退款率与销售质量<br>
+          · 佣金预算与费用预估（含 6.8%）
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    数据来源：《2026年9月-满足结算.xlsx》· 分佣流水（610 行 / 42 字段）。所有统计数字由该表实际计算得出，未做任何估算或补全。<br>
+    本页仅表达已知业务关系；凡标注「待确认」处，均不做公式、名单或流程的自行补全。
+  </div>
+</footer>
+
+<script>
+  // 导航高亮
+  var links = document.querySelectorAll('nav a');
+  var secs = document.querySelectorAll('section');
+  window.addEventListener('scroll', function(){
+    var cur = secs[0].id;
+    secs.forEach(function(s){ if(window.scrollY + 80 >= s.offsetTop) cur = s.id; });
+    links.forEach(function(a){ a.classList.toggle('on', a.getAttribute('href') === '#'+cur); });
+  });
+</script>
+</body>
+</html>
