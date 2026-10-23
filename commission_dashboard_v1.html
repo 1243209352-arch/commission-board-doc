@@ -146,6 +146,23 @@ tbody tr.neg td.num{color:var(--neg)}
 .hide{display:none!important}
 @media(max-width:1000px){.cards.r3,.cards.r4{grid-template-columns:repeat(2,1fr)}.comps,.audit{grid-template-columns:1fr}}
 @media(max-width:620px){.cards{grid-template-columns:1fr}.trend{gap:10px}}
+
+  .fbar .fbtn{align-self:flex-end;display:flex;gap:8px;padding-bottom:2px}
+  .fbar .fbtn button{height:34px;padding:0 18px;border-radius:8px;font-size:13px;cursor:pointer;border:1px solid var(--blue);background:var(--blue);color:#fff}
+  .fbar .fbtn button.ghost{background:#fff;color:var(--blue)}
+  .pending{margin-top:10px;padding:9px 12px;border-radius:8px;font-size:12.5px;line-height:1.7;display:none}
+  .pending.on{display:block;background:#FFF8E6;border:1px solid #F0D08A;color:#8A6100}
+  .pending.idle{display:block;background:#F4F7FA;border:1px solid var(--line);color:var(--sub)}
+  .loading{display:inline-block;padding-left:18px;position:relative;color:var(--blue)}
+  .loading:before{content:'';position:absolute;left:0;top:3px;width:11px;height:11px;border:2px solid var(--blue);border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .sortbtn{margin-left:auto;background:#fff;border:1px solid var(--line);border-radius:6px;font-size:11.5px;padding:2px 8px;color:var(--sub);cursor:pointer}
+  .sortbtn:hover{border-color:var(--blue);color:var(--blue)}
+  .cbox h3{display:flex;align-items:center;gap:8px}
+  .crow .qt{min-width:74px;text-align:right}
+  .crow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .crow .amt{min-width:96px;text-align:right;font-variant-numeric:tabular-nums}
+  .seg button.off{opacity:.45}
 </style>
 </head>
 <body>
@@ -153,15 +170,16 @@ tbody tr.neg td.num{color:var(--neg)}
 
 <header>
   <div>
-    <h1>销售佣金数据看板<small>Demo v1.3</small></h1>
+    <h1>销售佣金数据看板<small>Demo v1.4</small></h1>
     <div class="meta" id="hMeta"></div>
   </div>
   <button class="ghost" id="btnMask">显示真名</button>
 </header>
 
-<h2><i>①</i>数据筛选 <em>时间口径统一为结算月份；身份 / 部门职位 / 队伍为三个独立维度，不可互相替代</em></h2>
+<h2><i>①</i>数据筛选 <em>改完条件点「搜索」才生效；统计结果只跟随<b>已提交的</b>查询条件</em></h2>
 <div class="panel">
   <div class="fbar" id="fbar"></div>
+  <div class="pending" id="pending"></div>
   <div class="finfo" id="finfo"></div>
 </div>
 
@@ -169,7 +187,7 @@ tbody tr.neg td.num{color:var(--neg)}
 <div class="cards r3" id="cardsA"></div>
 <div class="cards r4" id="cardsB"></div>
 
-<h2><i>③</i>佣金构成 <em>条形长度＝该组净额占最大组的比例；同时给出金额与单量</em></h2>
+<h2><i>③</i>佣金构成 <em>只给数值，不含装饰性图形；每组可切「从大到小 / 从小到大」，排序作用于真实金额</em></h2>
 <div class="comps" id="comps"></div>
 
 <h2><i>④</i>月度趋势 <em>按结算月份，不受「结算月份」筛选影响，其余筛选联动</em></h2>
@@ -182,16 +200,24 @@ tbody tr.neg td.num{color:var(--neg)}
 <div class="panel">
   <div class="rhead">
     <div class="seg" id="segRange">
-      <button data-r="month" class="on">按所选月份</button>
-      <button data-r="all">三个月累计</button>
+      <button data-m="2026-07" class="on">7 月</button>
+      <button data-m="2026-08" class="on">8 月</button>
+      <button data-m="2026-09" class="on">9 月</button>
     </div>
     <div style="font-size:12px;color:var(--sub)" id="rkInfo"></div>
   </div>
+  <div style="font-size:12px;color:var(--sub);padding:0 0 10px 2px" id="rkRange">
+    统计月份：<b>本区域独立</b>，在上方按钮多选；不影响页面顶部的全局筛选</div>
   <div class="tblbox">
     <table id="tblRank">
       <thead><tr>
         <th style="width:44px">#</th><th>姓名</th><th>身份</th><th>部门</th><th>职位</th><th>队伍</th>
-        <th class="num">应付佣金</th><th class="num">订单量</th><th class="num">流水笔数</th><th class="num">占比</th>
+        <th class="num">应付佣金</th>
+        <th class="num" title="正向流水的去重订单数（按来源单据 ID 去重），不含退款">正向订单量</th>
+        <th class="num" title="负向（退款冲减）流水的去重订单数，与正向分开统计，不重复计入订单量">退款量</th>
+        <th class="num" title="口径待业务确认：当前按「商品分类＝育儿百科」统计。数据源没有独立的「图书」标识字段，本口径需业务方确认后才可作准">图书订单量 ⓘ</th>
+        <th class="num" title="数据源不支持：8/9 月分佣流水没有「商品类型」「是否新购999」等可识别 99 商品的字段，无法统计，未做推断。需业务提供 99 商品清单后才能上线">99 商品订单量 ⓘ</th>
+        <th class="num">占比</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -258,7 +284,16 @@ const name = n => { if(!MASK||!n) return n||'未标注'; return n.length<=1?n:n[
 const phone = p => { if(!p) return '—'; return MASK ? p.slice(0,3)+'****'+p.slice(7) : p; };
 
 /* ---------------- 筛选 ---------------- */
+const FKEYS = ['m','ro','dd','gw','tm','ct','it','ch','me','q'];
+/* ST＝编辑中的条件（随用户操作实时变化）；DS＝已提交的查询条件（所有统计唯一依据） */
 const ST = {m:'all',ro:'all',dd:'all',gw:'all',tm:'all',ct:'all',it:'all',ch:'all',me:'all',q:''};
+let DS = {...ST};
+/* 排名与明细区域的独立月份多选（不影响顶部全局筛选） */
+const RMON = new Set(['2026-07','2026-08','2026-09']);
+/* 佣金构成排序：true＝从大到小（默认），false＝从小到大 */
+const SORT = {};
+let CUR_ROWS = [];
+const isDirty = () => FKEYS.some(k => (ST[k]||'') !== (DS[k]||''));
 /* 层级依赖：子级筛选项的候选项，由父级当前取值决定 */
 const PARENT = {gw:['ro','dd'], dd:['ro'], it:['ct']};
 const SEL = [
@@ -285,13 +320,53 @@ function buildFilters(){
     return `<div class="fg"><label>${f.label}${f.tip?`<span title="${f.tip}" style="cursor:help;color:var(--blue)">ⓘ</span>`:''}</label>
       <select data-k="${f.k}"></select></div>`;
   }).join('') + `<div class="fg wide"><label>姓名 / 手机号查询</label>
-      <input id="q" placeholder="输入姓名或 11 位手机号" autocomplete="off"></div>`;
+      <input id="q" placeholder="输入姓名（如 彭高雷）或 11 位手机号" autocomplete="off"></div>
+      <div class="fg fbtn"><button id="btnSearch">搜索</button><button id="btnReset" class="ghost">重置</button></div>`;
   bar.querySelectorAll('select').forEach(s=>s.onchange=e=>{
-    ST[e.target.dataset.k] = e.target.value; render();
+    ST[e.target.dataset.k] = e.target.value;
+    syncOptions();       // 候选值跟随联动
+    updPending();        // 只提示「待查询」，不刷新统计
   });
   const q = document.getElementById('q');
-  q.oninput = e => { ST.q = e.target.value.trim(); render(); };
+  q.oninput = e => { ST.q = e.target.value.trim(); updPending(); };
+  q.onkeydown = e => { if(e.key === 'Enter') doSearch(); };
+  document.getElementById('btnSearch').onclick = doSearch;
+  document.getElementById('btnReset').onclick = ()=>{
+    FKEYS.forEach(k=>ST[k] = (k==='q'?'':'all'));
+    syncOptions();
+    document.getElementById('q').value = '';
+    doSearch();
+  };
   syncOptions();
+  updPending();
+}
+/* 待查询提示：改了条件但没点搜索时，明确告诉用户下方数字还是上一次的结果 */
+function updPending(){
+  const el = document.getElementById('pending');
+  if(!el) return;
+  RESET_HINT = '';
+  if(isDirty()){
+    const human = f => (f.fmt ? f.fmt(ST[f.k]) : (ST[f.k]===''?'未标注':ST[f.k]));
+    const diff = SEL.filter(f=>ST[f.k]!==DS[f.k]).map(f=>`${f.label}＝${esc(human(f))}`);
+    el.className = 'pending on';
+    el.innerHTML = `<b>条件已修改，尚未查询</b>——下方所有统计仍为上一次查询结果（${diff.join('、')}${ST.q!==DS.q?'、姓名查询＝'+esc(ST.q):''}）。
+       点右侧<b>「搜索」</b>才会统一刷新概览、构成、排名与明细。`;
+  }else{
+    el.className = 'pending idle';
+    el.innerHTML = `当前展示的就是已提交条件的结果。修改任意下拉／姓名后点<b>「搜索」</b>生效。`;
+  }
+}
+let LOADING = false;
+function doSearch(){
+  DS = {...ST};
+  LOADING = true;
+  const host = document.getElementById('comps');
+  host.innerHTML = `<div class="cbox"><h3>&nbsp;</h3><div class="cempty"><span class="loading">正在按已提交条件汇总…</span></div></div>`;
+  document.getElementById('cardsA').innerHTML = '';
+  document.getElementById('cardsB').innerHTML = '';
+  document.querySelector('#tblRank tbody').innerHTML =
+    `<tr><td colspan="12" style="color:var(--sub);padding:18px"><span class="loading">查询中…</span></td></tr>`;
+  setTimeout(()=>{ LOADING=false; render(); }, 180);
 }
 /* 父级变化后，刷新子级候选项；若原选中值已失效则自动重置，并在页面提示 */
 let RESET_HINT = '';
@@ -316,20 +391,32 @@ function syncOptions(){
   });
   RESET_HINT = hints.join('；');
 }
-function pass(r, skipMonth){
-  if(!skipMonth && ST.m!=='all' && r.m!==ST.m) return false;
-  return (ST.ro==='all'||r.ro===ST.ro) &&
-    (ST.dd==='all'||r.dd===ST.dd) &&
-    (ST.gw==='all'||r.gw===ST.gw) &&
-    (ST.tm==='all'||r.tm===ST.tm) &&
-    (ST.ct==='all'||r.ct===ST.ct) &&
-    (ST.it==='all'||r.it===ST.it) &&
-    (ST.ch==='all'||r.ch===ST.ch) &&
-    (ST.me==='all'||r.me===ST.me) &&
-    (!ST.q || (r.nm||'').includes(ST.q) || (r.ph||'').includes(ST.q));
+const pkey = r => r.sid ? ('sid:'+r.sid) : ('nm:'+(r.nm||''));
+/* 姓名搜索：先用查询词在全量数据里定位到人（身份证为唯一标识），再按「人」关联其全部流水，
+   避免姓名相近时逐行字符串匹配出错 */
+let QKEYS = null;
+function buildQKeys(){
+  if(!DS.q) { QKEYS = null; return; }
+  const set = new Set();
+  ROWS.forEach(r=>{
+    if(((r.nm||'').includes(DS.q)) || ((r.ph||'').includes(DS.q))) set.add(pkey(r));
+  });
+  QKEYS = set;
 }
-function matched(){ return ROWS.filter(r=>pass(r,false)); }
-function matchedNoMonth(){ return ROWS.filter(r=>pass(r,true)); }
+function pass(r, skipMonth){
+  if(!skipMonth && DS.m!=='all' && r.m!==DS.m) return false;
+  if(QKEYS && !QKEYS.has(pkey(r))) return false;
+  return (DS.ro==='all'||r.ro===DS.ro) &&
+    (DS.dd==='all'||r.dd===DS.dd) &&
+    (DS.gw==='all'||r.gw===DS.gw) &&
+    (DS.tm==='all'||r.tm===DS.tm) &&
+    (DS.ct==='all'||r.ct===DS.ct) &&
+    (DS.it==='all'||r.it===DS.it) &&
+    (DS.ch==='all'||r.ch===DS.ch) &&
+    (DS.me==='all'||r.me===DS.me);
+}
+function matched(){ buildQKeys(); return ROWS.filter(r=>pass(r,false)); }
+function matchedNoMonth(){ buildQKeys(); return ROWS.filter(r=>pass(r,true)); }
 
 /* ---------------- 聚合 ---------------- */
 function agg(rows, key){
@@ -385,31 +472,43 @@ const COMP = [
   {key:'me', title:'按佣金计算方式'}
 ];
 const EXPAND = {};
+/* 部门 / 职位只在「员工」身份（或未筛选身份）下才有意义，创作者与未标注直接隐藏模块 */
+const ORG_COMP = ['dd','gw'];
+const showOrg = () => (DS.ro === 'all' || DS.ro === '员工');
 function renderComps(rows){
+  CUR_ROWS = rows;
   const host = document.getElementById('comps');
-  const total = rows.reduce((s,r)=>s+r.a,0) || 1;
-  host.innerHTML = COMP.map(c=>{
+  const shown = COMP.filter(c => ORG_COMP.includes(c.key) ? showOrg() : true);
+  const hidden = COMP.filter(c => !shown.includes(c));
+  const cardHtml = c=>{
+    const desc = SORT[c.key] !== false;              // 默认从大到小
     const g = agg(rows, c.key).map(x=>({...x, k: x.k || '未标注'}))
-                             .sort((a,b)=>b.amt-a.amt);
-    if(!g.length) return `<div class="cbox"><h3>${c.title}</h3><div class="cempty">当前筛选下无数据</div></div>`;
-    const maxAbs = Math.max(...g.map(x=>Math.abs(x.amt)))||1;
+                              .sort((a,b)=> desc ? b.amt-a.amt : a.amt-b.amt);
+    if(!g.length) return `<div class="cbox"><h3>${c.title}<span>当前筛选下无数据</span></h3>
+        <div class="cempty">该维度在当前已提交条件下没有任何数据</div></div>`;
     const show = EXPAND[c.key] ? g : g.slice(0,6);
     const body = show.map(x=>{
-      const w = Math.max(1.2, Math.abs(x.amt)/maxAbs*100);
-      const cls = x.amt<0?'n':(c.key==='ch'?'t':'');
-      const od = x.orders.size;
-      return `<div class="crow" title="${esc(x.k)}｜净额 ${money(x.amt)}｜${x.cnt} 笔｜${od} 单">
+      const amtCls = x.amt<0 ? ' style="color:var(--neg)"' : '';
+      return `<div class="crow" title="${esc(x.k)}｜净额 ${money(x.amt)}｜正向 ${num(x.posOrders.size)} 单｜退款 ${num(x.refOrders.size)} 单">
         <div class="nm">${esc(x.k||'未标注')}</div>
-        <div class="bar"><i class="${cls}" style="width:${w}%"></i></div>
-        <div class="amt">${money(x.amt)}</div>
-        <div class="qt">${num(od)} 单</div></div>`;
+        <div class="qt">${num(x.orders.size)} 单</div>
+        <div class="amt"${amtCls}>${money(x.amt)}</div></div>`;
     }).join('');
     const more = g.length>6 ? `<div class="crow more" data-more="${c.key}">${EXPAND[c.key]?'收起':'展开其余 '+(g.length-6)+' 项'}</div>` : '';
     const sum = g.reduce((s,x)=>s+x.amt,0);
-    return `<div class="cbox"><h3>${c.title}<span>${g.length} 类 · 合计 ${money(sum)}</span></h3>${body}${more}</div>`;
-  }).join('');
+    return `<div class="cbox"><h3>${c.title}<span>${g.length} 类 · 合计 ${money(sum)}</span>
+      <button class="sortbtn" data-sort="${c.key}">${desc?'从大到小 ↓':'从小到大 ↑'}</button></h3>${body}${more}</div>`;
+  };
+  const hideNote = hidden.length ? `<div class="cbox"><h3>部门 / 职位维度未展示<span>非隐藏异常</span></h3>
+      <div class="cempty">当前已提交身份为「<b>${esc(DS.ro)}</b>」。源数据中该身份不带部门与职位字段，
+      因此<b>不展示</b>「按部门」「按职位」两个构成模块——这不是金额为 0，而是该维度对此身份不适用。
+      切到「员工」即可看到。</div></div>` : '';
+  host.innerHTML = shown.map(cardHtml).join('') + hideNote;
   host.querySelectorAll('[data-more]').forEach(el=>el.onclick=()=>{
-    const k = el.dataset.more; EXPAND[k]=!EXPAND[k]; renderComps(rows);
+    const k = el.dataset.more; EXPAND[k]=!EXPAND[k]; renderComps(CUR_ROWS);
+  });
+  host.querySelectorAll('[data-sort]').forEach(el=>el.onclick=()=>{
+    const k = el.dataset.sort; SORT[k] = (SORT[k]===false); renderComps(CUR_ROWS);
   });
 }
 
@@ -446,11 +545,9 @@ function renderTrend(rows){
 }
 
 /* ---------------- 排名 ---------------- */
-let RANGE = 'month';
+/* 本区域的月份范围独立于顶部结算月筛选：多选一个按钮即加入/移出统计 */
 function baseRows(rows){
-  if(RANGE==='all') return matchedNoMonth();
-  if(ST.m!=='all') return rows.filter(r=>r.m===ST.m);
-  return rows;
+  return rows.filter(r=>RMON.has(r.m));
 }
 function rankRows(rows){
   const base = baseRows(rows);
@@ -458,10 +555,14 @@ function rankRows(rows){
   base.forEach(r=>{
     const k = r.sid || ('nm:'+r.nm);
     if(!map.has(k)) map.set(k,{k, nm:r.nm, ph:r.ph, ro:r.ro, dd:r.dd, gw:r.gw, tm:r.tm,
-      amt:0, orders:new Set(), cnt:0, pos:0, ref:0, months:new Set()});
+      amt:0, orders:new Set(), posOrders:new Set(), refOrders:new Set(), bookOrders:new Set(),
+      cnt:0, pos:0, ref:0, months:new Set()});
     const o = map.get(k);
     o.amt += r.a; o.cnt++; o.orders.add(r.oid); o.months.add(r.m);
-    if(r.d==='负向') o.ref += r.a; else o.pos += r.a;
+    if(r.d==='负向'){ o.ref += r.a; o.refOrders.add(r.oid); }
+    else { o.pos += r.a; o.posOrders.add(r.oid); }
+    /* 图书：口径待业务确认，当前按「商品分类＝育儿百科」计（数据源无独立图书标识） */
+    if(r.ct==='育儿百科') o.bookOrders.add(r.oid);
     if(!o.ph && r.ph) o.ph = r.ph;
     if(!o.ro && r.ro) o.ro = r.ro;
     if(!o.dd && r.dd) o.dd = r.dd;
@@ -483,17 +584,23 @@ function renderRank(rows){
       <td>${x.ro==='员工'?esc(blank(x.gw)):'<span style="color:var(--sub)">—</span>'}</td>
       <td><span class="badge">${esc(blank(x.tm))}</span></td>
       <td class="num">${money(x.amt)}</td>
-      <td class="num">${num(x.orders.size)}</td>
-      <td class="num">${num(x.cnt)}</td>
+      <td class="num">${num(x.posOrders.size)}</td>
+      <td class="num" style="color:${x.refOrders.size?'var(--neg)':'var(--sub)'}">${x.refOrders.size?num(x.refOrders.size):'—'}</td>
+      <td class="num">${num(x.bookOrders.size)}</td>
+      <td class="num" style="color:var(--sub)" title="数据源无可识别 99 商品的字段，未统计">—</td>
       <td class="num">${pct(x.amt/total)}</td></tr>`;
-  }).join('') || `<tr><td colspan="10" style="color:var(--sub);padding:18px">当前筛选下无数据</td></tr>`;
+  }).join('') || `<tr><td colspan="12" style="color:var(--sub);padding:18px">当前筛选下无数据</td></tr>`;
   tb.querySelectorAll('tr[data-k]').forEach(tr=>tr.onclick=()=>openDrawer(tr.dataset.k, baseRows(rows)));
-  const scope = RANGE==='all' ? '三个月累计（不受结算月筛选影响）'
-              : (ST.m!=='all' ? MON[ST.m]+'（结算月）' : '全部月份（未选定结算月）');
+  const ms = ['2026-07','2026-08','2026-09'].filter(m=>RMON.has(m)).map(m=>MON[m]);
+  const scope = ms.length===3 ? '7 / 8 / 9 月合计' : (ms.join(' + ')||'未选月份');
   document.getElementById('rkInfo').textContent = `${scope} · ${num(list.length)} 人 · 合计 ${money(list.reduce((s,x)=>s+x.amt,0))}`;
   document.getElementById('rkNote').innerHTML =
     `只统计<b>应付佣金</b>，实付不出排名（实付仅到「月 × 渠道 × 人」粒度，且人力与财务口径不同，混排会误导）。
-     ${RANGE==='month'&&ST.m==='all'?'当前未选定结算月份，排名按全部月份汇总；在筛选区选一个月份即可只看该月。':''}
+     <b>统计月份</b>为本区域独立的三个按钮，可多选看合计；多次点击可取消某个月（至少保留一个），
+     不会改动页面顶部的全局筛选。<br>
+     <b>99 商品订单量</b>当前<b>无法统计</b>：8/9 月分佣流水中没有「商品类型」「是否新购999」等可识别 99 商品的字段，
+     只有 7 月订单表有且仅 2 条「是」，不足以构成口径，因此<b>留空不推算</b>，需业务提供 99 商品清单后上线。<br>
+     <b>图书订单量</b>当前按「商品分类＝育儿百科」统计，<b>口径待业务确认</b>。<br>
      点击任意一行查看该人的销售明细。<br>
      <b>身份 / 部门职位 / 队伍</b>是三个独立维度：只有「员工」才带部门与职位，创作者与非员工统一显示「—」
      ${AUDIT.gw_suppressed?`（另有 ${AUDIT.gw_suppressed} 人（${esc(AUDIT.gw_suppressed_note)}）在 IP 培训营总表里有岗位记录，按会议口径不计入「职位」，<b>未删除原数据</b>，是否单独展示待确认）`:''}。<br>
@@ -517,8 +624,9 @@ function openDrawer(k, rows){
   document.getElementById('dName').textContent = name(first.nm);
   document.getElementById('dSub').innerHTML =
     `${esc(first.ro||'未标注')} · ${esc(blank(first.dd))} · 队伍 ${esc(blank(first.tm))}<br>
-     手机号 ${esc(phone(first.ph))} ｜ 结算月 ${months.map(m=>MON[m]).join('、')}
-     ｜ 命中 ${num(mine.length)} 笔流水`;
+     手机号 ${esc(phone(first.ph))}<br>
+     统计范围：<b>${[...months].filter(m=>RMON.has(m)).map(m=>MON[m]).join(' + ')||'未选月份'}</b>
+     （跟随排名区月份按钮）｜ 结算月 ${months.map(m=>MON[m]).join('、')} ｜ ${num(mine.length)} 笔流水`;
 
   const items = agg(mine,'it');
   const itemTotal = items.reduce((s,x)=>s+Math.abs(x.amt),0)||1;
@@ -543,11 +651,13 @@ function openDrawer(k, rows){
   const payHtml = pays.map(x=>`<span class="badge ${x.k==='财务云账户'?'b':(x.k==='人力名单'?'t':'w')}"
       style="margin-right:6px">${esc(x.k)} ${money(x.amt)}</span>`).join('');
 
+  const posOrdersN = new Set(mine.filter(r=>r.d!=='负向').map(r=>r.oid).filter(Boolean)).size;
+  const refOrdersN = new Set(mine.filter(r=>r.d==='负向').map(r=>r.oid).filter(Boolean)).size;
   document.getElementById('dBody').innerHTML = `
     <div class="dstats">
       <div class="dstat"><div class="k">应付佣金（净额）</div><div class="v">${money(net)}</div></div>
-      <div class="dstat"><div class="k">订单量</div><div class="v">${num(orders)}</div></div>
-      <div class="dstat"><div class="k">流水笔数</div><div class="v">${num(mine.length)}</div></div>
+      <div class="dstat"><div class="k">正向订单量</div><div class="v">${num(posOrdersN)}</div></div>
+      <div class="dstat"><div class="k">退款量</div><div class="v" style="color:${refOrdersN?'var(--neg)':'inherit'}">${refOrdersN?num(refOrdersN):'—'}</div></div>
     </div>
     <div style="font-size:12px;color:var(--sub);line-height:1.8">
       正向佣金 ${money(pos)}　负向冲减 ${money(ref)}　净额 ${money(net)}<br>发放归属：${payHtml||'—'}
@@ -644,32 +754,53 @@ function renderCheck(){
 
 /* ---------------- 渲染 ---------------- */
 function render(){
+  if(LOADING) return;
   syncOptions();
   const rows = matched();
+  CUR_ROWS = rows;
   const net = rows.reduce((s,r)=>s+r.a,0);
   const orders = new Set(rows.map(r=>r.oid).filter(Boolean)).size;
   const people = new Set(rows.map(r=>r.sid||r.nm)).size;
-  const act = Object.entries(ST).filter(([k,v])=>k!=='q' && v!=='all').length + (ST.q?1:0);
+  const act = FKEYS.filter(k=>k!=='q' && DS[k]!=='all').length + (DS.q?1:0);
+  let emptyTip = rows.length===0
+    ? `<span style="color:var(--sub)">当前已提交条件下无匹配数据（空结果，非程序异常）</span>` : '';
+  /* 搜人无结果时，不要求用户先清空全部条件：直接说明原因并给一键查询 */
+  let qHelp = '';
+  if(!rows.length && DS.q){
+    const all = ROWS.filter(r=>((r.nm||'').includes(DS.q))||((r.ph||'').includes(DS.q)));
+    if(all.length){
+      const names = [...new Set(all.map(r=>r.nm).filter(Boolean))].slice(0,4);
+      const mos = [...new Set(all.map(r=>MON[r.m]))].sort();
+      qHelp = `<span style="color:var(--warn)">「${esc(DS.q)}」在全量数据里有 ${num(all.length)} 笔（${esc(names.join('、'))}；涉及 ${mos.join('、')}），
+        但被当前已提交的其它筛选排除了。 </span><span class="clr" id="qClear">清空其它条件并查询此人</span>`;
+    }else{
+      qHelp = `<span style="color:var(--sub)">全量数据中不存在姓名或手机号含「${esc(DS.q)}」的人员</span>`;
+    }
+  }
   document.getElementById('finfo').innerHTML =
     `<span>命中 <b>${num(rows.length)}</b> 笔流水</span>
      <span>订单 <b>${num(orders)}</b></span>
      <span>人数 <b>${num(people)}</b></span>
      <span>应付净额 <b>${money(net)}</b></span>
-     <span>已启用 <b>${act}</b> 个筛选</span>
-     ${act?`<span class="clr" id="clr">清空筛选</span>`:''}
-     ${RESET_HINT?`<span style="color:var(--warn)">↺ ${esc(RESET_HINT)}</span>`:''}
-     ${rows.length===0?`<span style="color:var(--sub)">当前条件下无匹配数据（空结果，非程序异常）</span>`:''}`;
+     <span>已提交 <b>${act}</b> 个筛选</span>
+     ${act?`<span class="clr" id="clr">清空已提交条件</span>`:''}
+     ${emptyTip}${qHelp}`;
+  const bind = id => { const el=document.getElementById(id); if(el) el.onclick=()=>{
+    FKEYS.forEach(k=>ST[k]=(k==='q'?'':'all')); ST.q = DS.q;
+    syncOptions(); document.getElementById('q').value = DS.q; doSearch(); }; };
+  bind('qClear');
   const clr = document.getElementById('clr');
   if(clr) clr.onclick = ()=>{
-    Object.keys(ST).forEach(k=>ST[k] = (k==='q'?'':'all'));
-    document.querySelectorAll('#fbar select').forEach(s=>s.value='all');
-    document.getElementById('q').value='';
-    render();
+    FKEYS.forEach(k=>ST[k] = (k==='q'?'':'all'));
+    syncOptions();
+    document.getElementById('q').value = '';
+    doSearch();
   };
   renderCards(rows);
   renderComps(rows);
   renderTrend(matchedNoMonth());
   renderRank(rows);
+  updPending();
 }
 
 /* ---------------- init ---------------- */
@@ -680,10 +811,14 @@ document.getElementById('hMeta').innerHTML =
    + 企业微信通讯录（提供员工「部门路径 → 部门」「姓名｜岗位 → 职位」，${num(AUDIT.wecom_hit)} 人）<br>
    时间口径统一为<b>结算月份</b>；金额为佣金净额＝正向＋负向冲减`;
 document.getElementById('foot').innerHTML =
-  `佣金看板 Demo v1.3 · 2026-10-23 ｜ 页面所有数字由 ${num(AUDIT.rows)} 行明细在浏览器内实时汇总，无预置结果、无模拟数据<br>
-   <b>本版变化（v1.3）：</b>部门与职位改用<b>企业微信通讯录</b>真值，部门取企微路径第一层、职位取企微岗位，
-   并撤回上一版「部门字段混有疑似职位值」的待核实项（经比对为真实部门名）；
-   非员工的部门与职位口径统一，一律不体现<br>
+  `佣金看板 Demo v1.4 · 2026-10-23 ｜ 页面所有数字由 ${num(AUDIT.rows)} 行明细在浏览器内汇总，无预置结果、无模拟数据<br>
+   <b>本版变化（v1.4）：</b>筛选改为<b>「改条件 → 点搜索」两段式</b>，统计只跟随已提交条件，未提交时明确提示；
+   佣金构成<b>删除条形图</b>并支持升序/降序；选中创作者或未标注时<b>隐藏</b>部门与职位构成（非显示 0）；
+   姓名搜索改为<b>按人员唯一标识关联</b>；排名新增正向订单量、退款量、图书订单量，移除「流水笔数」；
+   排名与明细新增<b>独立月份多选</b><br>
+   <b>99 商品订单量：数据源不支持</b>——8/9 月无「商品类型/是否新购999」字段，7 月仅 2 条，<b>留空未推算</b>，待业务提供清单<br>
+   <b>v1.3 已实现：</b>部门与职位改用<b>企业微信通讯录</b>真值，部门取企微路径第一层、职位取企微岗位，
+   并撤回「部门字段混有疑似职位值」的待核实项（经比对为真实部门名）；非员工的部门与职位口径统一，一律不体现<br>
    <b>v1.2 已实现：</b>身份（员工/创作者/未标注）独立筛选并作为部门、职位的父级；
    部门→职位、商品分类→商品名称二级联动；概览拆成「金额 / 辅助指标」两行；
    核对模块新增应付、人力、财务、合计四项人数（按身份证去重取并集，不直接相加）<br>
@@ -693,17 +828,26 @@ document.getElementById('foot').innerHTML =
 document.getElementById('btnMask').onclick = e => {
   MASK = !MASK; e.target.textContent = MASK?'显示真名':'隐藏真名'; render();
 };
+function syncRangeBtns(){
+  document.querySelectorAll('#segRange button').forEach(x=>
+    x.classList.toggle('off', !RMON.has(x.dataset.m)));
+  const ms = ['2026-07','2026-08','2026-09'].filter(m=>RMON.has(m)).map(m=>MON[m]);
+  document.getElementById('rkRange').innerHTML =
+    `统计月份（本区域独立）：<b>${ms.join(' + ')||'未选月份'}</b>　片刻按钮可加/减某个月，至少保留一个月；不影响顶部全局筛选`;
+}
 document.getElementById('segRange').onclick = e => {
   const b = e.target.closest('button'); if(!b) return;
-  RANGE = b.dataset.r;
-  document.querySelectorAll('#segRange button').forEach(x=>x.classList.toggle('on', x===b));
-  renderRank(matched());
+  const m = b.dataset.m;
+  if(RMON.has(m)){ if(RMON.size>1) RMON.delete(m); } else RMON.add(m);
+  syncRangeBtns();
+  renderRank(matched());      // 只刷新本区域
 };
 document.getElementById('mask').onclick = closeDrawer;
 document.getElementById('dClose').onclick = closeDrawer;
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeDrawer(); });
 
 buildFilters();
+syncRangeBtns();
 renderCheck();
 render();
 </script>
